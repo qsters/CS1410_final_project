@@ -2,24 +2,45 @@ import pyopencl as cl
 import numpy as np
 import glfw
 from OpenGL.GL import *
+import os
 import time
+
+def limit_framerate(start_time, target_fps):
+    """
+    Delays execution to maintain a target framerate.
+
+    Args:
+    - start_time: The timestamp when the current frame started (float).
+    - target_fps: The desired framerate to maintain (int).
+    """
+    frame_duration = 1.0 / target_fps
+    elapsed = time.time() - start_time
+    remaining_time = frame_duration - elapsed
+    if remaining_time > 0:
+        time.sleep(remaining_time)
 
 
 def initialize_window(width, height):
     if not glfw.init():
         return None
-    window = glfw.create_window(width, height, "Binary Grid Visualization", None, None)
+    window = glfw.create_window(width, height, "Pixel Grid Visualization", None, None)
     if not window:
         glfw.terminate()
         return None
     glfw.make_context_current(window)
     return window
 
-def convert_to_pixel_grid(binary_grid):
-    pixel_grid = binary_grid * 255
-    pixel_grid_rgba = np.stack([pixel_grid]*4, axis=-1).astype(np.uint8)
-    pixel_grid_rgba[..., 3] = 255  # Set alpha to 255
-    return pixel_grid_rgba
+def initialize_pixel_grid(width, height):
+    # Create a binary grid of 0s and 1s
+    binary_grid = np.random.randint(2, size=(height, width), dtype=np.uint8)
+
+    # Expand the binary values to 0 or 255 for RGB channels
+    pixel_grid = np.empty((height, width, 4), dtype=np.uint8)
+    pixel_grid[..., 0:3] = np.expand_dims(binary_grid, axis=-1) * 255  # Set R, G, B channels
+    pixel_grid[..., 3] = 255  # Set alpha channel to 255
+
+    return pixel_grid
+
 
 def initialize_texture(pixel_grid):
     texture = glGenTextures(1)
@@ -44,59 +65,92 @@ def load_kernel_source(filename):
         return file.read()
 
 def initialize_opencl():
+    os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
+    # Get the first available platform
     platform = cl.get_platforms()[0]
-    device = platform.get_devices()[0]
+    # Get the first GPU device available on this platform. If you want to make sure it selects a GPU,
+    # you can iterate over devices and check their type
+    devices = platform.get_devices()
+    gpu_devices = [device for device in devices if device.type == cl.device_type.GPU]
+
+    # If there are no GPU devices, fall back to the first available device
+    if not gpu_devices:
+        print("No GPU device found. Using the first available device.")
+        device = devices[0]
+    else:
+        device = gpu_devices[0]  # Use the first GPU device
+
+    print("Using device:", device.name, "Type:", cl.device_type.to_string(device.type))
+
+    # Create a context and command queue for the selected device
     context = cl.Context([device])
     queue = cl.CommandQueue(context)
+
     return context, queue
 
 def compile_program(context, kernel_source):
     return cl.Program(context, kernel_source).build()
 
-def initialize_buffers(context, grid):
-    grid_buf = cl.Buffer(context, cl.mem_flags.READ_WRITE | cl.mem_flags.COPY_HOST_PTR, hostbuf=grid)
-    new_grid_buf = cl.Buffer(context, cl.mem_flags.READ_WRITE, grid.nbytes)
-    return grid_buf, new_grid_buf
+def initialize_buffers(context, pixel_grid):
+    buf = cl.Buffer(context, cl.mem_flags.WRITE_ONLY | cl.mem_flags.COPY_HOST_PTR, hostbuf=pixel_grid)
+    new_buf = cl.Buffer(context, cl.mem_flags.READ_WRITE, size=buf.size)
+    return buf, new_buf
 
 def main():
-    kernel_source = load_kernel_source('Shaders/game_of_life.cl')
+    kernel_source = load_kernel_source('Shaders/game_of_life.cl')  # Ensure this shader is adjusted for pixel data
     context, queue = initialize_opencl()
     program = compile_program(context, kernel_source)
 
-    # Window and OpenGL initialization
     width, height = 512, 512
     window = initialize_window(width, height)
     if not window:
         return
 
-    # Initialize the game grid as a binary grid
-    grid = np.random.randint(2, size=(height, width), dtype=np.int32)
-    grid_buf, new_grid_buf = initialize_buffers(context, grid)
+    image_data = initialize_pixel_grid(width, height)
+    image_buf, new_image_buf = initialize_buffers(context, image_data)
 
-    texture = initialize_texture(grid)
+    texture = initialize_texture(image_data)
+
+    frame_count = 0
+    start_time = time.time()
 
     while not glfw.window_should_close(window):
-        # Execute the Game of Life kernel
-        program.game_of_life(queue, (width, height), None, grid_buf, new_grid_buf, np.uint32(width), np.uint32(height))
+        frame_start_time = time.time()
 
-        # Copy the updated grid back to the host
-        cl.enqueue_copy(queue, grid, new_grid_buf).wait()
+        # Execute the shader
+        program.game_of_life(queue, (width, height), None, image_buf, new_image_buf, np.uint32(width), np.uint32(height))
+        # Copy the updated pixel grid back to the host
+        cl.enqueue_copy(queue, image_data, new_image_buf).wait()
 
-        # Convert the binary grid to a pixel grid for rendering
-        pixel_grid = convert_to_pixel_grid(grid)
+        # Update the texture directly with the updated pixel grid
 
-        # Update the texture with the pixel grid
-        glBindTexture(GL_TEXTURE_2D, texture)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixel_grid)
-
-        # Render the texture
         glClear(GL_COLOR_BUFFER_BIT)
+
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image_data)
+
         render_texture()
+
+        # limit_framerate(frame_start_time, 20)
+
         glfw.swap_buffers(window)
         glfw.poll_events()
 
-        # Swap the buffers for the next iteration
-        grid_buf, new_grid_buf = new_grid_buf, grid_buf
+        image_buf, new_image_buf = new_image_buf, image_buf
+
+        frame_count += 1
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+
+        # Every second, display the framerate and reset counters
+        if elapsed_time >= 1.0:
+            framerate = frame_count / elapsed_time
+            print(f"Framerate: {framerate:.2f} FPS")
+
+            # Reset the counter and timer
+            frame_count = 0
+            start_time = time.time()
+
 
     glfw.terminate()
 
