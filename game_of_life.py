@@ -1,7 +1,7 @@
 import pyopencl as cl
 import numpy as np
 from OpenGL.GL import *
-from GameEngine import GameEngine
+from game_engine import GameEngine
 
 
 class ConwaysGameOfLife(GameEngine):
