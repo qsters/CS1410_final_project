@@ -6,8 +6,8 @@ import time
 
 class GameEngine:
     def __init__(self, width, height, title, cl_file, target_framerate):
-        self.width = width
-        self.height = height
+        self.window_width = width
+        self.window_height = height
         self.target_framerate = target_framerate
         self.window_title = title
         self.window = None
@@ -21,7 +21,7 @@ class GameEngine:
     def initialize_window(self):
         if not glfw.init():
             raise Exception("Failed to initialize GLFW")
-        self.window = glfw.create_window(self.width, self.height, self.window_title, None, None)
+        self.window = glfw.create_window(self.window_width, self.window_height, self.window_title, None, None)
         if not self.window:
             glfw.terminate()
             raise Exception("Failed to create GLFW window")

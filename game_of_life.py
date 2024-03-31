@@ -7,7 +7,7 @@ from game_engine import GameEngine
 class ConwaysGameOfLife(GameEngine):
     def __init__(self, width, height, target_framerate=60, title='Conway\'s Game of Life', cl_file="Shaders/game_of_life.cl"):
         super().__init__(width, height, title, cl_file, target_framerate)
-        self.image_data = self.initialize_pixel_grid(self.width, self.height)
+        self.image_data = self.initialize_pixel_grid(self.window_width, self.window_height)
         self.image_buf, self.new_image_buf = self.initialize_buffers(self.image_data)
         self.texture = self.initialize_texture()
 
@@ -29,7 +29,7 @@ class ConwaysGameOfLife(GameEngine):
 
     def render_texture(self):
         glBindTexture(GL_TEXTURE_2D, self.texture)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.width, self.height, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.window_width, self.window_height, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
 
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, self.texture)
@@ -48,7 +48,7 @@ class ConwaysGameOfLife(GameEngine):
         self.image_buf, self.new_image_buf = self.new_image_buf, self.image_buf
 
     def update(self):
-        self.program.game_of_life(self.cl_queue, (self.width, self.height), None, self.image_buf, self.new_image_buf, np.uint32(self.width), np.uint32(self.height))
+        self.program.game_of_life(self.cl_queue, (self.window_width, self.window_height), None, self.image_buf, self.new_image_buf, np.uint32(self.window_width), np.uint32(self.window_height))
         cl.enqueue_copy(self.cl_queue, self.image_data, self.new_image_buf).wait()
 
 if __name__ == '__main__':

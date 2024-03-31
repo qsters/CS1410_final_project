@@ -40,7 +40,7 @@ class Simulation2D(GameEngine):
             ('sensor_distance', np.float32)
         ])
 
-        settings = np.array([(self.spore_count, self.height, self.width, self.spore_speed, self.decay_speed, self.sensor_distance)], dtype=settings_dtype)
+        settings = np.array([(self.spore_count, self.window_height, self.window_width, self.spore_speed, self.decay_speed, self.sensor_distance)], dtype=settings_dtype)
         return settings
 
     def initialize_texture(self):
@@ -53,7 +53,7 @@ class Simulation2D(GameEngine):
 
     def render_texture(self):
         glBindTexture(GL_TEXTURE_2D, self.texture)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.width, self.height, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.window_width, self.window_height, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
 
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, self.texture)
@@ -66,7 +66,7 @@ class Simulation2D(GameEngine):
         glDisable(GL_TEXTURE_2D)
 
     def get_empty_image(self):
-        pixel_grid = np.empty((self.height, self.width, 4), dtype=np.uint8)
+        pixel_grid = np.empty((self.window_height, self.window_width, 4), dtype=np.uint8)
         pixel_grid[..., 3] = 255
         return pixel_grid
 
@@ -82,9 +82,13 @@ class Simulation2D(GameEngine):
         spores = np.zeros(self.spore_count, dtype=spore_dtype)
 
         # Randomize positions within the bounds of height and width
-        spores['x'] = np.random.randint(0, self.width, size=self.spore_count)
-        spores['y'] = np.random.randint(0, self.height, size=self.spore_count)
+        spores['x'] = np.random.uniform(0, self.window_width, size=self.spore_count)
+        spores['y'] = np.random.uniform(0, self.window_height, size=self.spore_count)
         spores['angle'] = np.random.uniform(0, 2 * math.pi, size=self.spore_count)
+
+        # spores['x'][0] = self.window_width / 2
+        # spores['y'][0] = self.window_height / 2
+        # spores['angle'][0] = 0
 
         return spores
 
@@ -98,7 +102,7 @@ class Simulation2D(GameEngine):
         # Update the accumulator to retain only the fractional part
         self.decay_accumulator -= decay_amount
 
-        self.program.fade_image(self.cl_queue, (self.width, self.height), None, self.image_buf, self.settings_buffer, np.uint32(decay_amount))
+        self.program.fade_image(self.cl_queue, (self.window_width, self.window_height), None, self.image_buf, self.settings_buffer, np.uint32(decay_amount))
         self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.image_buf, self.spores_buffer, self.settings_buffer)
         self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.image_buf, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
 
