@@ -5,11 +5,12 @@ from game_engine import GameEngine
 
 
 class ConwaysGameOfLife(GameEngine):
-    def __init__(self, width, height, framerate=60, title='Conway\'s Game of Life', cl_file="Shaders/game_of_life.cl"):
-        super().__init__(width, height, title, cl_file, framerate)
+    def __init__(self, width, height, target_framerate=60, title='Conway\'s Game of Life', cl_file="Shaders/game_of_life.cl"):
+        super().__init__(width, height, title, cl_file, target_framerate)
         self.image_data = self.initialize_pixel_grid(self.width, self.height)
         self.image_buf, self.new_image_buf = self.initialize_buffers(self.image_data)
         self.texture = self.initialize_texture()
+
 
     def initialize_pixel_grid(self, width, height):
         binary_grid = np.random.randint(2, size=(height, width), dtype=np.uint8)
