@@ -100,7 +100,7 @@ class Simulation2D(GameEngine):
 
         self.program.fade_image(self.cl_queue, (self.width, self.height), None, self.image_buf, self.settings_buffer, np.uint32(decay_amount))
         self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.image_buf, self.spores_buffer, self.settings_buffer)
-        self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
+        self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.image_buf, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
 
         cl.enqueue_copy(self.cl_queue, self.image_data, self.image_buf).wait()
 
@@ -108,5 +108,5 @@ class Simulation2D(GameEngine):
         self.render_texture()
 
 if __name__ == '__main__':
-    game = Simulation2D(500, 500)
+    game = Simulation2D(500, 500, 1000)
     game.run()

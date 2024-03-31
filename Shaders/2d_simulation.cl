@@ -81,7 +81,7 @@ __kernel void draw_spores(__global uchar* image, __global Spore* spores, __globa
 
 // Include hash and scaleToRange01 functions here
 
-__kernel void move_spores(__global Spore* spores, __global uint* random_seeds, __global const Settings* settings, const float delta_time) {
+__kernel void move_spores(__global Spore* spores, __global uchar* image,__global uint* random_seeds, __global const Settings* settings, const float delta_time) {
     uint idx = (uint)get_global_id(0);
 
     if (idx >= settings->spore_count) {
@@ -89,6 +89,30 @@ __kernel void move_spores(__global Spore* spores, __global uint* random_seeds, _
     }
 
     float angle = spores[idx].angle;
+
+    float forwardWeight = sense(&spores[idx], image, settings, 0.0f);
+    float rightWeight = sense(&spores[idx], image, settings, -M_PI / 4.0f);
+    float leftWeight = sense(&spores[idx], image, settings, M_PI / 4.0f);
+
+    // Starting the change with some random amount
+    float turningDelta = 0;
+
+    // Forward strongest, keep going forward
+    if (forwardWeight > rightWeight && forwardWeight > leftWeight)
+    {
+        turningDelta += 0;
+    }
+    else if (rightWeight > leftWeight) // turn right
+    {
+        turningDelta -= 0.3;
+    }
+    else if (leftWeight > rightWeight) // turn left
+    {
+        turningDelta += 0.3;
+    }
+
+    float newAngle = angle + turningDelta;
+
     float2 direction = (float2)(cos(angle), sin(angle)) * settings->spore_speed * delta_time;
     float2 newPosition = spores[idx].position + direction;
 
@@ -104,10 +128,12 @@ __kernel void move_spores(__global Spore* spores, __global uint* random_seeds, _
         newPosition.y = clamp(newPosition.y, 0.0f, (float)(settings->screen_height - 1));
 
         // Update the spore's angle and position with the new values
-        spores[idx].angle = randomAngle;
+        newAngle = randomAngle;
     }
+
     // If not outside bounds update the spore's position
     spores[idx].position = newPosition;
+    spores[idx].angle = newAngle;
 }
 
 __kernel void fade_image(__global uchar* image, __global const Settings* settings, const uchar decay_amount) {
