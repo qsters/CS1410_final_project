@@ -14,6 +14,7 @@ typedef struct {
     uint screen_width;
     float spore_speed;
     float decay_speed;
+    float turn_speed;
     float sensor_distance;
 } Settings;
 
@@ -104,14 +105,14 @@ __kernel void move_spores(__global Spore* spores, __global uchar* image,__global
     }
     else if (rightWeight > leftWeight) // turn right
     {
-        turningDelta -= 0.3;
+        turningDelta -= 1;
     }
     else if (leftWeight > rightWeight) // turn left
     {
-        turningDelta += 0.3;
+        turningDelta += 1;
     }
 
-    float newAngle = angle + turningDelta;
+    float newAngle = angle + turningDelta * settings->turn_speed * delta_time * M_PI;
 
     float2 direction = (float2)(cos(angle), sin(angle)) * settings->spore_speed * delta_time;
     float2 newPosition = spores[idx].position + direction;

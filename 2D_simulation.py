@@ -22,8 +22,9 @@ class Simulation2D(GameEngine):
         self.random_seeds_buffer = self.initialize_buffer(self.random_seeds)
 
         self.spore_speed = 100
-        self.decay_speed = .1
+        self.decay_speed = .2
         self.sensor_distance = 5
+        self.turn_speed = 3
 
         self.decay_accumulator = 0
 
@@ -37,10 +38,11 @@ class Simulation2D(GameEngine):
             ('screen_width', np.uint32),
             ('spore_speed', np.float32),
             ('decay_speed', np.float32),
+            ('turn_speed', np.float32),
             ('sensor_distance', np.float32)
         ])
 
-        settings = np.array([(self.spore_count, self.window_height, self.window_width, self.spore_speed, self.decay_speed, self.sensor_distance)], dtype=settings_dtype)
+        settings = np.array([(self.spore_count, self.window_height, self.window_width, self.spore_speed, self.decay_speed, self.turn_speed,self.sensor_distance)], dtype=settings_dtype)
         return settings
 
     def initialize_texture(self):
@@ -86,7 +88,7 @@ class Simulation2D(GameEngine):
         spores['y'] = np.random.uniform(0, self.window_height, size=self.spore_count)
         spores['angle'] = np.random.uniform(0, 2 * math.pi, size=self.spore_count)
 
-        # spores['x'][0] = self.window_width / 2
+        # spores['x'] = self.window_width / 2
         # spores['y'][0] = self.window_height / 2
         # spores['angle'][0] = 0
 
@@ -112,5 +114,5 @@ class Simulation2D(GameEngine):
         self.render_texture()
 
 if __name__ == '__main__':
-    game = Simulation2D(500, 500, 1000)
+    game = Simulation2D(500, 500, 1000, target_framerate=100)
     game.run()
