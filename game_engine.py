@@ -52,8 +52,8 @@ class GameEngine:
         devices = platform.get_devices()
         gpu_devices = [device for device in devices if device.type == cl.device_type.GPU]
         if not gpu_devices:
-            print("No GPU device found. Using the first available device.")
-            device = devices[0]
+            print("No GPU device found.")
+            exit(1)
         else:
             device = gpu_devices[0]
         print("Using device:", device.name, "Type:", cl.device_type.to_string(device.type))

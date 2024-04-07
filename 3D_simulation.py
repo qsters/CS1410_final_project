@@ -6,7 +6,7 @@ import numpy as np
 from OpenGL.GL import *
 from game_engine import GameEngine
 
-class Simulation2D(GameEngine):
+class Simulation3D(GameEngine):
     def __init__(self, width, height, spore_count=300, title="Slime Mold Sim 2D", target_framerate=60):
         super().__init__(width, height, title, "Shaders/2d_simulation.cl", target_framerate)
 
@@ -14,8 +14,8 @@ class Simulation2D(GameEngine):
         self.image_buf, _ = self.initialize_buffers(self.image_data)
         self.texture = self.initialize_texture()
 
-        self.fragment_shader = self.load_file("Shaders/2D_fragment_shader.glsl")
-        self.vertex_shader = self.load_file("Shaders/2D_vertex_shader.glsl")
+        self.fragment_shader = self.load_file("Shaders/3D_fragment_shader.glsl")
+        self.vertex_shader = self.load_file("Shaders/3D_vertex_shader.glsl")
 
         self.spore_count = spore_count
         self.spores = self.initialize_spores()
@@ -237,5 +237,5 @@ class Simulation2D(GameEngine):
         cl.enqueue_copy(self.cl_queue, self.settings_buffer, settings)
 
 if __name__ == '__main__':
-    game = Simulation2D(500, 500, 1000, target_framerate=100)
+    game = Simulation3D(500, 500, 1000, target_framerate=100)
     game.run()
