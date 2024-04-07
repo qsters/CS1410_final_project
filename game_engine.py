@@ -3,30 +3,48 @@ import glfw
 from OpenGL.GL import *
 import os
 import time
+import imgui
+from imgui.integrations.glfw import GlfwRenderer
 
 class GameEngine:
     def __init__(self, width, height, title, cl_file, target_framerate):
         self.window_width = width
         self.window_height = height
         self.target_framerate = target_framerate
-        self.window_title = title
-        self.window = None
-        self.initialize_window()
+
+        self.window = self.initialize_window(self.window_width, self.window_height, title)
+        imgui.create_context()
+        self.impl = GlfwRenderer(self.window)
+
         self.cl_context, self.cl_queue = self.initialize_opencl()
-        self.program = cl.Program(self.cl_context, self.load_kernel_source(cl_file)).build()
+        self.program = cl.Program(self.cl_context, self.load_file(cl_file)).build()
         self.last_frame_time = glfw.get_time()
         self.delta_time = 0.0
         self.frame_rate = 0
 
-    def initialize_window(self):
+    def initialize_window(self, window_width, window_height, window_title):
         if not glfw.init():
             raise Exception("Failed to initialize GLFW")
-        self.window = glfw.create_window(self.window_width, self.window_height, self.window_title, None, None)
-        if not self.window:
+            exit(1)
+
+        # OS X supports only forward-compatible core profiles from 3.2
+        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+
+        glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, GL_TRUE)
+
+        window = glfw.create_window(window_width, window_height, window_title, None, None)
+        glfw.make_context_current(window)
+
+        if not window:
             glfw.terminate()
             raise Exception("Failed to create GLFW window")
-        glfw.make_context_current(self.window)
-        print("Window Initialized...")
+            exit(1)
+
+        return window
+
+
 
     def initialize_opencl(self):
         os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
@@ -51,12 +69,24 @@ class GameEngine:
             current_time = glfw.get_time()
             self.delta_time = current_time - self.last_frame_time
             self.last_frame_time = current_time
+            self.impl.process_inputs()
+
+            glfw.poll_events()
 
             self.update()
-            glClear(GL_COLOR_BUFFER_BIT)
+
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
             self.render()
+
+            imgui.new_frame()
+            self.render_gui()
+            imgui.end()
+            imgui.pop_style_var()
+            imgui.render()
+
+            self.impl.render(imgui.get_draw_data())
             glfw.swap_buffers(self.window)
-            glfw.poll_events()
             self.post_render()
 
             # Frame rate calculation
@@ -71,10 +101,11 @@ class GameEngine:
             if time_to_wait > 0:
                 time.sleep(time_to_wait)
 
+        self.impl.shutdown()
         glfw.terminate()
 
     # Helper Functions
-    def load_kernel_source(self, filename):
+    def load_file(self, filename):
         with open(filename, 'r') as file:
             return file.read()
 
@@ -98,4 +129,8 @@ class GameEngine:
 
     def post_render(self):
         """Called once after rendering"""
+        pass
+
+    def render_gui(self):
+        """Called after rendering, for rendering the GUI"""
         pass
