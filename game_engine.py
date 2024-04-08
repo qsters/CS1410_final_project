@@ -81,8 +81,7 @@ class GameEngine:
 
             imgui.new_frame()
             self.render_gui()
-            imgui.end()
-            imgui.pop_style_var()
+            imgui.end_frame()
             imgui.render()
 
             self.impl.render(imgui.get_draw_data())

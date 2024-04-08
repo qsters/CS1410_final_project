@@ -5,13 +5,20 @@ import pyopencl as cl
 import numpy as np
 from OpenGL.GL import *
 from game_engine import GameEngine
+import glm
 
 class Simulation3D(GameEngine):
-    def __init__(self, width, height, spore_count=300, title="Slime Mold Sim 2D", target_framerate=60):
-        super().__init__(width, height, title, "Shaders/2d_simulation.cl", target_framerate)
+    def __init__(self, window_width, window_height, simulation_width=10, simulation_height=10, simulation_length=10, spore_count=300, title="Slime Mold Sim 2D", target_framerate=60):
+        super().__init__(window_width, window_height, title, "Shaders/2d_simulation.cl", target_framerate)
 
-        self.image_data = self.get_empty_image()
-        self.image_buf, _ = self.initialize_buffers(self.image_data)
+        self.simulation_width = simulation_width
+        self.simulation_height = simulation_height
+        self.simulation_length = simulation_length
+
+        self.volume_data = self.get_empty_volume()
+        self.instance_positions = self.get_instance_positions()
+        self.instance_vbo = self.get_instance_position_buffer()
+        self.image_buf, _ = self.initialize_buffers(self.volume_data)
         self.texture = self.initialize_texture()
 
         self.fragment_shader = self.load_file("Shaders/3D_fragment_shader.glsl")
@@ -35,7 +42,9 @@ class Simulation3D(GameEngine):
         self.settings_buffer = self.initialize_buffer(self.settings)
 
         self.shader_program = self.create_shader_program()
-        self.setup_rendering()  # Call after creating the shader program
+        self.vao, self.vbo, self.ebo = self.setup_rendering()
+        self.projection, self.view, self.model, self.model_loc, self.view_loc, self.proj_loc = self.setup_matrices()
+        glEnable(GL_DEPTH_TEST)  # Enable depth test
 
 
     def create_settings(self):
@@ -84,40 +93,115 @@ class Simulation3D(GameEngine):
         glBindTexture(GL_TEXTURE_2D, texture)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, self.image_data.shape[1], self.image_data.shape[0], 0, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, self.volume_data.shape[1], self.volume_data.shape[0], 0, GL_RGBA, GL_UNSIGNED_BYTE, self.volume_data)
         return texture
 
     def setup_rendering(self):
         # Vertex data: positions and texture coordinates for a fullscreen quad
-        vertex_data = np.array([
-            -1.0, -1.0,  0.0, 0.0,  # Triangle 1, Bottom-left
-            1.0, -1.0,  1.0, 0.0,  # Triangle 1, Bottom-right
-            -1.0,  1.0,  0.0, 1.0,  # Triangle 1, Top-left
-            1.0, -1.0,  1.0, 0.0,  # Triangle 2, Bottom-right
-            -1.0,  1.0,  0.0, 1.0,  # Triangle 2, Top-left
-            1.0,  1.0,  1.0, 1.0   # Triangle 2, Top-right
+        # Define the 8 vertices of the cube
+        vertices = np.array([
+            -0.5, -0.5, -0.5,  # Vertex 0
+            0.5, -0.5, -0.5,  # Vertex 1
+            0.5,  0.5, -0.5,  # Vertex 2
+            -0.5,  0.5, -0.5,  # Vertex 3
+            -0.5, -0.5,  0.5,  # Vertex 4
+            0.5, -0.5,  0.5,  # Vertex 5
+            0.5,  0.5,  0.5,  # Vertex 6
+            -0.5,  0.5,  0.5   # Vertex 7
         ], dtype=np.float32)
 
-        self.vao = glGenVertexArrays(1)
-        glBindVertexArray(self.vao)
+        # Define the 12 triangles (2 per face) that make up the cube
+        indices = np.array([
+            0, 1, 2, 2, 3, 0,  # Front face
+            1, 5, 6, 6, 2, 1,  # Right face
+            7, 6, 5, 5, 4, 7,  # Back face
+            4, 0, 3, 3, 7, 4,  # Left face
+            4, 5, 1, 1, 0, 4,  # Bottom face
+            3, 2, 6, 6, 7, 3   # Top face
+        ], dtype=np.uint32)
 
-        self.vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.nbytes, vertex_data, GL_STATIC_DRAW)
+        # Create and bind the Vertex Array Object
+        vao = glGenVertexArrays(1)
+        glBindVertexArray(vao)
 
-        # Position attribute
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * vertex_data.itemsize, ctypes.c_void_p(0))
+        # Create and bind the Vertex Buffer Object
+        vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+
+        # Create and bind the Element Buffer Object
+        ebo = glGenBuffers(1)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+
+        # Enable the vertex attribute pointers
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * vertices.itemsize, ctypes.c_void_p(0))
         glEnableVertexAttribArray(0)
-        # Texture coordinate attribute
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * vertex_data.itemsize, ctypes.c_void_p(2 * vertex_data.itemsize))
-        glEnableVertexAttribArray(1)
 
+        # Unbind the VBO and VAO
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         glBindVertexArray(0)
 
+        return vao, vbo, ebo
+
+    def get_instance_positions(self):
+        positions = []
+        # Iterate through the volume data to find voxels set to 255
+        for z in range(self.simulation_length):
+            for y in range(self.simulation_height):
+                for x in range(self.simulation_width):
+                    if self.volume_data[y, x, z] == 255:
+                        # Convert grid coordinates to world space coordinates as needed
+                        positions.append([x, y, z])
+        # Convert to a numpy array for easier handling
+        return np.array(positions, dtype=np.float32)
+
+    def get_instance_position_buffer(self):
+        # Generate a buffer ID
+        instance_vbo = glGenBuffers(1)
+        # Bind the buffer
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribDivisor(1, 1)  # Mark as per-instance attribute
+
+        # Pass the instance positions data to the buffer
+        glBufferData(GL_ARRAY_BUFFER, self.instance_positions.nbytes, self.instance_positions.flatten(), GL_STATIC_DRAW)
+        # Enable and set up the attribute pointer for instance positions
+        glEnableVertexAttribArray(1)  # Assuming 1 is the layout location for instancePos in your shader
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * self.instance_positions.itemsize, ctypes.c_void_p(0))
+        glVertexAttribDivisor(1, 1)  # This makes it an instanced attribute
+        # Unbind the buffer
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        return instance_vbo
+
+
+    def setup_matrices(self):
+        # Projection matrix (Perspective projection)
+        projection = glm.perspective(glm.radians(45), self.window_width / self.window_height, 0.1, 100.0)
+
+        # View matrix (Camera transformation)
+        view = glm.lookAt(glm.vec3(20, 20, 30),  # Camera is at (2,2,3), in World Space
+                               glm.vec3(0, 0, 0),  # Looks at the origin
+                               glm.vec3(0, 1, 0))  # Head is up (set to 0,-1,0 to look upside-down)
+
+        # Model matrix (Model transformation)
+        model = glm.mat4(1.0)  # Initialize model matrix to identity matrix
+
+        # Get the location of the uniforms from the shader
+        model_loc = glGetUniformLocation(self.shader_program, "model")
+        view_loc = glGetUniformLocation(self.shader_program, "view")
+        proj_loc = glGetUniformLocation(self.shader_program, "projection")
+
+        return projection, view, model, model_loc, view_loc, proj_loc
+
+
     def render_texture(self):
         glBindTexture(GL_TEXTURE_2D, self.texture)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.window_width, self.window_height, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.window_width, self.window_height, GL_RGBA, GL_UNSIGNED_BYTE, self.volume_data)
 
         glBindVertexArray(self.vao)
         # Use your shader program
@@ -127,10 +211,16 @@ class Simulation3D(GameEngine):
         glBindVertexArray(0)
         glUseProgram(0)
 
-    def get_empty_image(self):
-        pixel_grid = np.empty((self.window_height, self.window_width, 4), dtype=np.uint8)
-        pixel_grid[..., 3] = 255
-        return pixel_grid
+    def get_empty_volume(self):
+        # Create an empty 3D numpy array for the volume data
+        volume = np.zeros((self.simulation_height, self.simulation_width, self.simulation_length), dtype=np.uint8)
+
+        # Randomly set some voxels to 255
+        num_voxels_to_set = int(volume.size * 0.01)  # Set 1% of the voxels randomly for visualization
+        indices = np.unravel_index(np.random.choice(volume.size, num_voxels_to_set, replace=False), volume.shape)
+        volume[indices] = 1
+
+        return volume
 
     def initialize_spores(self):
         # Define the structured datatype for a 2D spore
@@ -164,39 +254,28 @@ class Simulation3D(GameEngine):
         # Update the accumulator to retain only the fractional part
         self.decay_accumulator -= decay_amount
 
-        self.program.fade_image(self.cl_queue, (self.window_width, self.window_height), None, self.image_buf, self.settings_buffer, np.uint32(decay_amount))
-        self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.image_buf, self.spores_buffer, self.settings_buffer)
-        self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.image_buf, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
+        # self.program.fade_image(self.cl_queue, (self.window_width, self.window_height), None, self.image_buf, self.settings_buffer, np.uint32(decay_amount))
+        # self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.image_buf, self.spores_buffer, self.settings_buffer)
+        # self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.image_buf, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
 
-        cl.enqueue_copy(self.cl_queue, self.image_data, self.image_buf).wait()
+        # cl.enqueue_copy(self.cl_queue, self.volume_data, self.image_buf).wait()
 
     def render(self):
-        # Activate the shader program
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glUseProgram(self.shader_program)
 
-        # Bind the texture to texture unit 0
-        glActiveTexture(GL_TEXTURE0)
-        glBindTexture(GL_TEXTURE_2D, self.texture)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.window_width, self.window_height, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
+        glUniformMatrix4fv(self.model_loc, 1, GL_FALSE, glm.value_ptr(self.model))
+        glUniformMatrix4fv(self.view_loc, 1, GL_FALSE, glm.value_ptr(self.view))
+        glUniformMatrix4fv(self.proj_loc, 1, GL_FALSE, glm.value_ptr(self.projection))
 
-
-        # Tell the shader the texture is in texture unit 0
-        glUniform1i(glGetUniformLocation(self.shader_program, "texture1"), 0)
-
-        # Bind the VAO (and therefore the VBO and attribute configurations)
         glBindVertexArray(self.vao)
-
-        # Draw the quad (2 triangles, 6 vertices)
-        glDrawArrays(GL_TRIANGLES, 0, 6)
-
-        # Unbind the VAO and shader program
+        glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, None, len(self.instance_positions))
         glBindVertexArray(0)
+
         glUseProgram(0)
+
+
     def render_gui(self):
-
-        # Set the window flags
-        window_flags = imgui.WINDOW_NO_MOVE | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_COLLAPSE
-
         # Set the window's background alpha (transparency) to 0.7 (1.0 is opaque, 0.0 is transparent)
         imgui.push_style_var(imgui.STYLE_ALPHA, 0.8)
 

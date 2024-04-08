@@ -115,6 +115,8 @@ class Simulation2D(GameEngine):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         glBindVertexArray(0)
 
+
+
     def render_texture(self):
         glBindTexture(GL_TEXTURE_2D, self.texture)
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.window_width, self.window_height, GL_RGBA, GL_UNSIGNED_BYTE, self.image_data)
