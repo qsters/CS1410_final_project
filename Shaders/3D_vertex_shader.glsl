@@ -25,7 +25,7 @@ void main() {
     mat4 modelView = scaledModel * mat4(1.0, 0.0, 0.0, 0.0,
                                         0.0, 1.0, 0.0, 0.0,
                                         0.0, 0.0, 1.0, 0.0,
-                                        scaledPos.x, scaledPos.y, scaledPos.z, 1.0);
+                                        scaledPos.x, scaledPos.z, scaledPos.y, 1.0);
 
     gl_Position = projection * view * modelView * vec4(aPos, 1.0);
     FragPos = instancePos; // Pass scaled position to fragment shader

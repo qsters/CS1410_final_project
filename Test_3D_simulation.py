@@ -1,6 +1,6 @@
 import math
-
-import glfw
+import imgui
+import pyopencl as cl
 import numpy as np
 from OpenGL.GL import *
 from game_engine import GameEngine
@@ -14,53 +14,51 @@ class TestSimulation3D(GameEngine):
         self.simulation_height = simulation_height
         self.simulation_length = simulation_length
 
+        self.volume_data = self.get_empty_volume()
+        self.instance_positions = self.get_instance_positions()
+        self.instance_vbo = self.get_instance_position_buffer()
+        self.image_buf, _ = self.initialize_buffers(self.volume_data)
+        self.texture = self.initialize_texture()
+
         self.fragment_shader = self.load_file("Shaders/3D_fragment_shader.glsl")
         self.vertex_shader = self.load_file("Shaders/3D_vertex_shader.glsl")
 
-        self.volume_data = self.get_empty_volume()
-        self.instance_positions, self.instance_sizes = self.get_instance_positions_and_sizes()
-        self.position_instance_vbo, self.size_instance_vbo = self.get_instance_buffers()
-        self.image_buf, _ = self.initialize_buffers(self.volume_data)
+        self.spore_count = spore_count
+        self.spores = self.initialize_spores()
+        self.spores_buffer = self.initialize_buffer(self.spores)
+
+        self.random_seeds = np.random.randint(0, 2**32 - 1, size=self.spore_count, dtype=np.uint32)
+        self.random_seeds_buffer = self.initialize_buffer(self.random_seeds)
+
+        self.spore_speed = 100
+        self.decay_speed = .2
+        self.sensor_distance = 5
+        self.turn_speed = 3
+
+        self.decay_accumulator = 0
+
+        self.settings = self.create_settings()
+        self.settings_buffer = self.initialize_buffer(self.settings)
 
         self.shader_program = self.create_shader_program()
         self.vao, self.vbo, self.ebo = self.setup_rendering()
-
-        self.uniform_loc_simulationWidth = glGetUniformLocation(self.shader_program, "simulationWidth")
-        self.uniform_loc_simulationHeight = glGetUniformLocation(self.shader_program, "simulationHeight")
-        self.uniform_loc_simulationLength = glGetUniformLocation(self.shader_program, "simulationLength")
-
-
-        self.simulation_center = glm.vec3(
-            self.simulation_width / 2,
-            self.simulation_height / 2,
-            self.simulation_length / 2
-        )
-        # Model matrix (Model transformation)
-        self.model = glm.mat4(1.0)  # Initialize model matrix to identity matrix
-
-        # Get the location of the uniforms from the shader
-        self.model_loc = glGetUniformLocation(self.shader_program, "model")
-        self.view_loc = glGetUniformLocation(self.shader_program, "view")
-        self.proj_loc = glGetUniformLocation(self.shader_program, "projection")
-
-        max_dimension = max(self.simulation_width, self.simulation_height, self.simulation_length)
-        self.camera_distance = max_dimension * 2.5  # Adjust multiplier as needed for best view
-
-        # Projection matrix (Perspective projection)
-        self.projection = glm.perspective(glm.radians(45), self.window_width / self.window_height, 0.1, self.camera_distance * 2)
-
-        self.camera_yaw = 45.0
-        self.camera_pitch = 45.0
-
-        self.view = self.get_view()
-
-        if self.window:
-            glfw.set_key_callback(self.window, self.key_callback)
-
-        self.camera_speed = 15
-        self.camera_delta = glm.vec2(0,0)
-
+        self.projection, self.view, self.model, self.model_loc, self.view_loc, self.proj_loc = self.setup_matrices()
         glEnable(GL_DEPTH_TEST)  # Enable depth test
+
+
+    def create_settings(self):
+        settings_dtype = np.dtype([
+            ('spore_count', np.uint32),
+            ('screen_height', np.uint32),
+            ('screen_width', np.uint32),
+            ('spore_speed', np.float32),
+            ('decay_speed', np.float32),
+            ('turn_speed', np.float32),
+            ('sensor_distance', np.float32)
+        ])
+
+        settings = np.array([(self.spore_count, self.window_height, self.window_width, self.spore_speed, self.decay_speed, self.turn_speed,self.sensor_distance)], dtype=settings_dtype)
+        return settings
 
     def compile_shader(self, source, shader_type):
         shader = glCreateShader(shader_type)
@@ -70,7 +68,6 @@ class TestSimulation3D(GameEngine):
             error = glGetShaderInfoLog(shader).decode('utf-8')
             raise RuntimeError("Shader compilation error: " + error)
         return shader
-
 
     def create_shader_program(self):
         vertex_shader = self.compile_shader(self.vertex_shader, GL_VERTEX_SHADER)
@@ -90,55 +87,13 @@ class TestSimulation3D(GameEngine):
 
         return shader_program
 
-
-    def get_empty_volume(self):
-        volume = np.zeros((self.simulation_height, self.simulation_width, self.simulation_length), dtype=np.float32)
-        return volume
-
-
-    def get_instance_positions_and_sizes(self):
-        # Assuming volume_data is a NumPy array of shape (height, width, length)
-        # Find indices where value > 0
-        nonzero_indices = np.argwhere(self.volume_data > 0)
-
-        # Normalize sizes based on voxel values
-        sizes = self.volume_data[nonzero_indices[:, 0], nonzero_indices[:, 1], nonzero_indices[:, 2]]
-
-        # Change type of data to floats
-        positions = nonzero_indices.astype(np.float32)
-        sizes = sizes.astype(np.float32)
-        print(positions)
-        return positions, sizes
-
-    def get_view(self):
-        # Recalculate the camera front vector
-        front = glm.vec3(
-            math.cos(glm.radians(self.camera_yaw)) * math.cos(glm.radians(self.camera_pitch)),
-            math.sin(glm.radians(self.camera_pitch)),
-            math.sin(glm.radians(self.camera_yaw)) * math.cos(glm.radians(self.camera_pitch))
-        )
-        front = glm.normalize(front)
-
-        # Now update the view matrix
-        camera_position = self.simulation_center + front * self.camera_distance
-        view = glm.lookAt(camera_position, self.simulation_center, glm.vec3(0, 1, 0))
-        return view
-
-    def key_callback(self, window, key, scancode, action, mods):
-        # Adjust the camera's yaw and pitch based on arrow key input
-        if action == glfw.PRESS or action == glfw.REPEAT:
-            if key == glfw.KEY_UP:
-                self.camera_delta[1] = 1
-            if key == glfw.KEY_DOWN:
-                self.camera_delta[1] = -1
-            if key == glfw.KEY_RIGHT:
-                self.camera_delta[0] = 1
-            if key == glfw.KEY_LEFT:
-                self.camera_delta[0] = -1
-        else:
-            self.camera_delta *= 0
-
-
+    def initialize_texture(self):
+        texture = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, self.volume_data.shape[1], self.volume_data.shape[0], 0, GL_RGBA, GL_UNSIGNED_BYTE, self.volume_data)
+        return texture
 
     def setup_rendering(self):
         # Vertex data: positions and texture coordinates for a fullscreen quad
@@ -168,104 +123,197 @@ class TestSimulation3D(GameEngine):
         vao = glGenVertexArrays(1)
         glBindVertexArray(vao)
 
-        # Cube vertices
+        # Create and bind the Vertex Buffer Object
         vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
         glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), ctypes.c_void_p(0))
-        glEnableVertexAttribArray(0)
 
-        # Cube indices
+        # Create and bind the Element Buffer Object
         ebo = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
 
-        # Instance positions setup should be here, within VAO setup
-        glBindBuffer(GL_ARRAY_BUFFER, self.position_instance_vbo)
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), ctypes.c_void_p(0))
-        glEnableVertexAttribArray(1)
-        glVertexAttribDivisor(1, 1)
+        # Enable the vertex attribute pointers
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * vertices.itemsize, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(0)
 
-        # Unbind VAO (not the EBO or instance VBO)
-        glBindVertexArray(0)
-        # It's okay to unbind the GL_ARRAY_BUFFER
+        # Unbind the VBO and VAO
         glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
 
         return vao, vbo, ebo
 
+    def get_instance_positions(self):
+        positions = []
+        # Iterate through the volume data to find voxels set to 255
+        for z in range(self.simulation_length):
+            for y in range(self.simulation_height):
+                for x in range(self.simulation_width):
+                    if self.volume_data[y, x, z] == 255:
+                        # Convert grid coordinates to world space coordinates as needed
+                        positions.append([x, y, z])
+        # Convert to a numpy array for easier handling
+        return np.array(positions, dtype=np.float32)
 
-    def get_instance_buffers(self):
+    def get_instance_position_buffer(self):
+        # Generate a buffer ID
+        instance_vbo = glGenBuffers(1)
+        # Bind the buffer
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
 
-        # Generate and bind the buffer for instance positions
-        instance_positions_vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, instance_positions_vbo)
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribDivisor(1, 1)  # Mark as per-instance attribute
+
+        # Pass the instance positions data to the buffer
         glBufferData(GL_ARRAY_BUFFER, self.instance_positions.nbytes, self.instance_positions.flatten(), GL_STATIC_DRAW)
-
-        # Generate and bind the buffer for instance sizes
-        instance_sizes_vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, instance_sizes_vbo)
-        glBufferData(GL_ARRAY_BUFFER, self.instance_sizes.nbytes, self.instance_sizes.flatten(), GL_STATIC_DRAW)
-
-        # Unbind the GL_ARRAY_BUFFER
+        # Enable and set up the attribute pointer for instance positions
+        glEnableVertexAttribArray(1)  # Assuming 1 is the layout location for instancePos in your shader
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * self.instance_positions.itemsize, ctypes.c_void_p(0))
+        glVertexAttribDivisor(1, 1)  # This makes it an instanced attribute
+        # Unbind the buffer
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
-        return instance_positions_vbo, instance_sizes_vbo
+        return instance_vbo
 
+
+    def setup_matrices(self):
+        # Projection matrix (Perspective projection)
+        projection = glm.perspective(glm.radians(45), self.window_width / self.window_height, 0.1, 100.0)
+
+        # View matrix (Camera transformation)
+        view = glm.lookAt(glm.vec3(20, 20, 30),  # Camera is at (2,2,3), in World Space
+                          glm.vec3(0, 0, 0),  # Looks at the origin
+                          glm.vec3(0, 1, 0))  # Head is up (set to 0,-1,0 to look upside-down)
+
+        # Model matrix (Model transformation)
+        model = glm.mat4(1.0)  # Initialize model matrix to identity matrix
+
+        # Get the location of the uniforms from the shader
+        model_loc = glGetUniformLocation(self.shader_program, "model")
+        view_loc = glGetUniformLocation(self.shader_program, "view")
+        proj_loc = glGetUniformLocation(self.shader_program, "projection")
+
+        return projection, view, model, model_loc, view_loc, proj_loc
+
+
+    def render_texture(self):
+        glBindTexture(GL_TEXTURE_2D, self.texture)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, self.window_width, self.window_height, GL_RGBA, GL_UNSIGNED_BYTE, self.volume_data)
+
+        glBindVertexArray(self.vao)
+        # Use your shader program
+        glUseProgram(self.shader_program)
+        # Now draw the quad
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4)
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+    def get_empty_volume(self):
+        # Create an empty 3D numpy array for the volume data
+        volume = np.zeros((self.simulation_height, self.simulation_width, self.simulation_length), dtype=np.uint8)
+
+        # Randomly set some voxels to 255
+        num_voxels_to_set = int(volume.size * 0.01)  # Set 1% of the voxels randomly for visualization
+        indices = np.unravel_index(np.random.choice(volume.size, num_voxels_to_set, replace=False), volume.shape)
+        volume[indices] = 1
+
+        return volume
+
+    def initialize_spores(self):
+        # Define the structured datatype for a 2D spore
+        spore_dtype = np.dtype([
+            ('x', np.float32),  # x position
+            ('y', np.float32),  # y position
+            ('angle', np.float32),  # y position
+        ])
+
+        # Initialize empty array of spores
+        spores = np.zeros(self.spore_count, dtype=spore_dtype)
+
+        # Randomize positions within the bounds of height and width
+        spores['x'] = np.random.uniform(0, self.window_width, size=self.spore_count)
+        spores['y'] = np.random.uniform(0, self.window_height, size=self.spore_count)
+        spores['angle'] = np.random.uniform(0, 2 * math.pi, size=self.spore_count)
+
+        # spores['x'] = self.window_width / 2
+        # spores['y'][0] = self.window_height / 2
+        # spores['angle'][0] = 0
+
+        return spores
+
+    def update(self):
+        # Calculate the total decay amount to add to the accumulator
+        self.decay_accumulator += self.decay_speed * self.delta_time * 255
+
+        # Extract the whole number part of the decay amount to apply
+        decay_amount = int(self.decay_accumulator)
+
+        # Update the accumulator to retain only the fractional part
+        self.decay_accumulator -= decay_amount
+
+        # self.program.fade_image(self.cl_queue, (self.window_width, self.window_height), None, self.image_buf, self.settings_buffer, np.uint32(decay_amount))
+        # self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.image_buf, self.spores_buffer, self.settings_buffer)
+        # self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.image_buf, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
+
+        # cl.enqueue_copy(self.cl_queue, self.volume_data, self.image_buf).wait()
 
     def render(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glUseProgram(self.shader_program)
 
-        # Set simulation sizes
-        glUniform1f(self.uniform_loc_simulationWidth, float(self.simulation_width))
-        glUniform1f(self.uniform_loc_simulationHeight, float(self.simulation_height))
-        glUniform1f(self.uniform_loc_simulationLength, float(self.simulation_length))
-
-        # Update matrices uniforms
         glUniformMatrix4fv(self.model_loc, 1, GL_FALSE, glm.value_ptr(self.model))
         glUniformMatrix4fv(self.view_loc, 1, GL_FALSE, glm.value_ptr(self.view))
         glUniformMatrix4fv(self.proj_loc, 1, GL_FALSE, glm.value_ptr(self.projection))
 
-        # Bind VAO
         glBindVertexArray(self.vao)
-
-
-        # Bind the instance positions buffer
-        glBindBuffer(GL_ARRAY_BUFFER, self.position_instance_vbo)
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), ctypes.c_void_p(0))
-        glEnableVertexAttribArray(1)
-        glVertexAttribDivisor(1, 1)  # This makes it an instanced attribute for position
-
-        # Bind the instance sizes buffer
-        glBindBuffer(GL_ARRAY_BUFFER, self.size_instance_vbo)
-        glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(GLfloat), ctypes.c_void_p(0))
-        glEnableVertexAttribArray(2)
-        glVertexAttribDivisor(2, 1)  # This makes it an instanced attribute for size
-
-        # Draw the instances
         glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, None, len(self.instance_positions))
-
-        # Clean up
         glBindVertexArray(0)
+
         glUseProgram(0)
 
-        # Don't forget to unbind the GL_ARRAY_BUFFER
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
+    def render_gui(self):
+        # Set the window's background alpha (transparency) to 0.7 (1.0 is opaque, 0.0 is transparent)
+        imgui.push_style_var(imgui.STYLE_ALPHA, 0.8)
 
-    def update(self):
-        if self.camera_delta == [0, 0]:  # return if zero
-            return
+        # Start a new ImGui window
+        if imgui.begin("Simulation Parameters"):
 
-        self.camera_delta = glm.normalize(self.camera_delta)  # Normalize the delta vector
+            # Slider for spore_speed
+            changed, self.spore_speed = imgui.slider_float("Spore Speed", self.spore_speed, 5.0, 200.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
 
-        # Use the normalized values for pitch and yaw adjustments
-        self.camera_pitch += self.camera_delta.y * self.delta_time * self.camera_speed
-        self.camera_yaw -= self.camera_delta.x * self.delta_time * self.camera_speed
+            # Slider for decay_speed
+            changed, self.decay_speed = imgui.slider_float("Decay Speed", self.decay_speed, 0.1, 1.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
 
-        self.view = self.get_view()
+            # Slider for sensor_distance
+            changed, self.sensor_distance = imgui.slider_float("Sensor Distance", self.sensor_distance, 0.1, 10.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
 
+            # Slider for turn_speed
+            changed, self.turn_speed = imgui.slider_float("Turn Speed", self.turn_speed, 0.0, 5.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
+
+    def update_settings_buffer(self):
+        # Create a new settings array
+        settings = np.array([(self.spore_count, self.window_height, self.window_width,
+                              self.spore_speed, self.decay_speed, self.turn_speed,
+                              self.sensor_distance)], dtype=self.create_settings().dtype)
+
+        # Update the buffer with the new settings
+        cl.enqueue_copy(self.cl_queue, self.settings_buffer, settings)
 
 if __name__ == '__main__':
-    game = TestSimulation3D(500, 500, target_framerate=45)
+    game = TestSimulation3D(500, 500, 1000, target_framerate=100)
     game.run()
