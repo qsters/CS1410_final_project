@@ -1,7 +1,5 @@
 import math
 
-import imgui
-import pyopencl as cl
 import glfw
 import numpy as np
 from OpenGL.GL import *
@@ -94,14 +92,7 @@ class TestSimulation3D(GameEngine):
 
 
     def get_empty_volume(self):
-        # Create an empty 3D numpy array for the volume data
-        volume = np.zeros((self.simulation_height, self.simulation_width, self.simulation_length), dtype=np.uint8)
-
-        # Randomly set some voxels to 255
-        num_voxels_to_set = int(volume.size * 0.01)  # Set 1% of the voxels randomly for visualization
-        indices = np.unravel_index(np.random.choice(volume.size, num_voxels_to_set, replace=False), volume.shape)
-        volume[indices] = 1
-
+        volume = np.zeros((self.simulation_height, self.simulation_width, self.simulation_length), dtype=np.float32)
         return volume
 
 
@@ -111,15 +102,12 @@ class TestSimulation3D(GameEngine):
         nonzero_indices = np.argwhere(self.volume_data > 0)
 
         # Normalize sizes based on voxel values
-        sizes = self.volume_data[nonzero_indices[:, 0], nonzero_indices[:, 1], nonzero_indices[:, 2]] / 255.0
+        sizes = self.volume_data[nonzero_indices[:, 0], nonzero_indices[:, 1], nonzero_indices[:, 2]]
 
-        # Adjust positions if necessary based on simulation grid
+        # Change type of data to floats
         positions = nonzero_indices.astype(np.float32)
-
-        # Optionally adjust positions (e.g., offset, scale) based on your grid configuration
-        # For example, if you want to center the grid or scale the positions
-        # positions = (positions - grid_offset) * scale_factor
-
+        sizes = sizes.astype(np.float32)
+        print(positions)
         return positions, sizes
 
     def get_view(self):
@@ -149,7 +137,6 @@ class TestSimulation3D(GameEngine):
                 self.camera_delta[0] = -1
         else:
             self.camera_delta *= 0
-
 
 
 
@@ -242,8 +229,6 @@ class TestSimulation3D(GameEngine):
         # Bind VAO
         glBindVertexArray(self.vao)
 
-        # # Assuming instance_positions_vbo and instance_sizes_vbo are the buffer objects for positions and sizes
-        # instance_positions_vbo, instance_sizes_vbo = self.get_instance_buffers()
 
         # Bind the instance positions buffer
         glBindBuffer(GL_ARRAY_BUFFER, self.position_instance_vbo)
