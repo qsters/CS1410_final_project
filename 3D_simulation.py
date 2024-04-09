@@ -23,10 +23,10 @@ class Simulation3D(GameEngine):
         self.spores = self.initialize_spores()
         self.spores_buffer = self.initialize_buffer(self.spores)
 
-        self.spore_speed = 100
-        self.decay_speed = 1
-        self.sensor_distance = 5
-        self.turn_speed = 3
+        self.spore_speed = 0
+        self.decay_speed = 10
+        self.sensor_distance = 10
+        self.turn_speed = 5
 
         self.settings = self.create_settings()
         self.settings_buffer = self.initialize_buffer(self.settings)
@@ -103,20 +103,27 @@ class Simulation3D(GameEngine):
             ('x', np.float32),  # x position
             ('y', np.float32),  # y position
             ('z', np.float32),  # z position
-            ('angle', np.float32),  # azimuth angle
-            ('inclination', np.float32)  # azimuth angle
+            ('pad', np.float32),
+            ('azimuth', np.float32),  # z position
+            ('inclination', np.float32),  # z position
         ])
 
         # Initialize empty array of spores
         spores = np.zeros(self.spore_count, dtype=spore_dtype)
 
-        # Randomize positions within the bounds of height and width
-        spores['x'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
-        spores['y'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
-        spores['z'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+        spores[0]['x'] = self.simulation_size / 2
+        spores[0]['y'] = self.simulation_size / 2
+        spores[0]['z'] = self.simulation_size / 2
 
-        spores['angle'] = np.random.uniform(0, 2 * math.pi, size=self.spore_count)
-        spores['inclination'] = np.random.uniform(0, 2 * math.pi, size=self.spore_count)
+        # # Randomize positions within the bounds of height and width
+        # spores['x'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+        # spores['y'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+        # spores['z'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+        #
+        # # Generate random direction vectors
+        # # Creating random vectors in spherical coordinates then converting them
+        # spores["azimuth"] = np.random.uniform(0, 2 * np.pi, size=self.spore_count)
+        # spores["inclination"] = np.random.uniform(0, np.pi, size=self.spore_count)  # [0, π] for inclination to cover full sphere
 
         return spores
 
@@ -166,9 +173,17 @@ class Simulation3D(GameEngine):
         self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.volume_buffer, self.spores_buffer,
                                  self.settings_buffer)
 
+        self.program.draw_sensors(self.cl_queue, (self.spore_count,), None, self.volume_buffer, self.spores_buffer,
+                                 self.settings_buffer)
+
+
         self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.volume_buffer, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
 
+        self.cl_queue.finish()
+
         cl.enqueue_copy(self.cl_queue, self.volume_data, self.volume_buffer).wait()
+        cl.enqueue_copy(self.cl_queue, self.spores, self.spores_buffer).wait()
+        print("Direction: ", [self.spores[0]['x'], self.spores[0]['y'], self.spores[0]['z']], "Azimuth: ", self.spores[0]['azimuth'], "Inclination: ", self.spores[0]['inclination'])
 
         self.instance_positions, self.instance_sizes = self.get_instance_positions_and_sizes()
         self.renderer.update_instance_data(self.instance_positions, self.instance_sizes)
@@ -176,5 +191,5 @@ class Simulation3D(GameEngine):
 
 
 if __name__ == '__main__':
-    game = Simulation3D(500, 500, target_framerate=10, spore_count=1)
+    game = Simulation3D(500, 500, 30,  target_framerate=30, spore_count=1)
     game.run()

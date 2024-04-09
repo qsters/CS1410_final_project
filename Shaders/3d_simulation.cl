@@ -5,13 +5,13 @@
 
 typedef struct {
     float3 position;  // Use float2 for position
-    float angle;
+    float azimuth;
     float inclination;
 } Spore;
 
 typedef struct {
     uint spore_count;
-    uint screen_size;
+    uint simulation_size;
     float spore_speed;
     float decay_speed;
     float turn_speed;
@@ -21,27 +21,52 @@ typedef struct {
 //// Function prototypes
 uint hash(uint state);
 float scaleToRange01(uint state);
-//float sense(__global Spore* spore, __global uchar* image, __global const Settings* settings, float sensorAngleOffset);
+float3 sph_to_car(float azimuth, float inclination);
+float sense(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
+void draw_sensor(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
 
-//float sense(__global Spore* spore, __global uchar* image, __global const Settings* settings, float sensorAngleOffset) {
-//    float sensorAngle = spore->angle + sensorAngleOffset;
-//    float2 sensorDir = (float2)(cos(sensorAngle), sin(sensorAngle));
-//
-//    // Calculate the sampling position
-//    float2 samplePos = spore->position + sensorDir * settings->sensor_distance;
-//
-//    // Clamp the sampling position to be within the image bounds
-//    uint sampleX = clamp((uint)samplePos.x, (uint)0, settings->screen_width - (uint)1);
-//    uint sampleY = clamp((uint)samplePos.y, (uint)0, settings->screen_height - (uint)1);
-//
-//    // Calculate the linear index in the image array
-//    uint idx = (sampleY * settings->screen_width + sampleX) * 4; // 4 bytes per pixel
-//
-//    // Access the green component of the pixel,
-//    float sensedAlpha = (float)image[idx + (uint)2] / 255.0f; // Normalize the alpha value to [0, 1]
-//
-//    return sensedAlpha;
-//}
+float sense(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward) {
+        // Calculate the sampling position using the direction vector
+        float3 averagePos = normalize(forward + direction);
+
+        float3 samplePos = spore->position + averagePos * settings->sensor_distance;
+
+        // Clamp the sampling position to be within the simulation bounds
+        uint sampleX = clamp((uint)samplePos.x, 0u, settings->simulation_size - 1u);
+        uint sampleY = clamp((uint)samplePos.y, 0u, settings->simulation_size - 1u);
+        uint sampleZ = clamp((uint)samplePos.z, 0u, settings->simulation_size - 1u);
+
+        // Calculate the linear index in the volume array
+        uint idx = sampleZ * settings->simulation_size * settings->simulation_size + sampleY * settings->simulation_size + sampleX;
+
+        // return value
+        return volume[idx];
+}
+
+float3 sph_to_car(float azimuth, float inclination) {
+    return (float3)(sin(inclination) * cos(azimuth),
+                     sin(inclination) * sin(azimuth),
+                     cos(inclination));
+}
+
+void draw_sensor(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward) {
+    // Calculate the sampling position using the direction vector
+    float3 averagePos = normalize(forward + direction);
+
+    float3 samplePos = spore->position + averagePos * settings->sensor_distance;
+
+    // Clamp the sampling position to be within the simulation bounds
+    uint sampleX = clamp((uint)samplePos.x, 0u, settings->simulation_size - 1u);
+    uint sampleY = clamp((uint)samplePos.y, 0u, settings->simulation_size - 1u);
+    uint sampleZ = clamp((uint)samplePos.z, 0u, settings->simulation_size - 1u);
+
+    // Calculate the linear index in the volume array
+    uint idx = sampleZ * settings->simulation_size * settings->simulation_size + sampleY * settings->simulation_size + sampleX;
+
+    // Mark the sensor position in the volume
+    volume[idx] = 1.0; // Assign a value to indicate a sensor's position
+}
+
 
 uint hash(uint state) {
     state ^= 2747636419u;
@@ -71,11 +96,42 @@ __kernel void draw_spores(__global float* volume, __global Spore* spores, __glob
     uint z = (int)(s.position.z);
 
     // Ensure the coordinates are within the image bounds
-    if (x < settings->screen_size && y < settings->screen_size && z < settings->screen_size) {
-        uint volume_idx = z * settings->screen_size * settings->screen_size + y * settings->screen_size + x;
+    if (x < settings->simulation_size && y < settings->simulation_size && z < settings->simulation_size) {
+        uint volume_idx = z * settings->simulation_size * settings->simulation_size + y * settings->simulation_size + x;
         volume[volume_idx] = 1.0f; // Place a 1 at the position of the spore
     }
 }
+
+__kernel void draw_sensors(__global float* volume, __global Spore* spores, __global const Settings* settings) {
+    uint idx = get_global_id(0);
+
+    if (idx >= settings->spore_count) {
+        return;
+    }
+
+    float3 upVector = (float3)(1.0f, 0.0f, 0.0f); // Global up
+    float3 sporeDirection = sph_to_car(spores[idx].azimuth, spores[idx].inclination); // Assuming spores[].direction is already defined
+
+    // Generate the local right vector
+    float3 rightVector = cross(sporeDirection, upVector);
+    if (length(rightVector) == 0) { // Handle parallel or antiparallel direction
+        // Fallback or adjust rightVector
+        rightVector = (float3)(1.0f, 0.0f, 0.0f);
+    }
+    rightVector = normalize(rightVector);
+
+    // Generate local up vector based on right and forward vectors
+    float3 upVectorAdjusted = cross(rightVector, sporeDirection);
+    upVectorAdjusted = normalize(upVectorAdjusted);
+
+    draw_sensor(&spores[idx], volume, settings, sporeDirection, sporeDirection);
+//    draw_sensor(&spores[idx], volume, settings, rightVector, sporeDirection);
+    draw_sensor(&spores[idx], volume, settings, -rightVector, sporeDirection);
+    draw_sensor(&spores[idx], volume, settings, upVectorAdjusted, sporeDirection);
+    draw_sensor(&spores[idx], volume, settings, -upVectorAdjusted, sporeDirection);
+}
+
+
 
 __kernel void move_spores(__global Spore* spores, __global float* volume, __global uint* random_seeds, __global const Settings* settings, const float delta_time) {
     uint idx = (uint)get_global_id(0);
@@ -84,38 +140,88 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
         return;
     }
 
-    float azimuth = spores[idx].angle;
-    float inclination = spores[idx].inclination;
+    float3 upVector = (float3)(-1.0f, 0.0f, 0.0f); // Global up
+    float3 sporeDirection = sph_to_car(spores[idx].azimuth, M_PI / 2); // Assuming spores[].direction is already defined
 
-    float speed = 1.0f;
+    // Generate the local right vector
+    float3 rightVector = cross(sporeDirection, upVector);
+    if (length(rightVector) == 0) { // Handle parallel or antiparallel direction
+        // Fallback or adjust rightVector
+        rightVector = (float3)(1.0f, 0.0f, 0.0f);
+    }
+    rightVector = normalize(rightVector);
 
-    float3 direction = (float3)(sin(inclination) * cos(azimuth),
-                                       sin(inclination) * sin(azimuth),
-                                       cos(inclination)) * speed;
+    // Generate local up vector based on right and forward vectors
+    float3 upVectorAdjusted = cross(rightVector, sporeDirection);
+    upVectorAdjusted = normalize(upVectorAdjusted);
 
-    float3 newPosition = spores[idx].position + direction;
+    float forwardWeight = sense(&spores[idx], volume, settings, sporeDirection, sporeDirection);
+    float rightWeight = sense(&spores[idx], volume, settings, rightVector, sporeDirection);
+    float leftWeight = sense(&spores[idx], volume, settings, -rightVector, sporeDirection);
+    float upWeight = sense(&spores[idx], volume, settings, upVectorAdjusted, sporeDirection);
+    float downWeight = sense(&spores[idx], volume, settings, -upVectorAdjusted, sporeDirection);
+
+    // Initialize the change in azimuth and inclination
+    float azimuthDelta = 0.1;
+    float inclinationDelta = 0.0;
+
+//    if (forwardWeight < rightWeight || forwardWeight < leftWeight) {
+//        // Decide turning based on left and right weights
+//        if (rightWeight > leftWeight) {
+//            azimuthDelta -= 1; // Turn right
+//        } else if (leftWeight > rightWeight) {
+//            azimuthDelta += 1; // Turn left
+//        }
+//    }
+//
+//    if (forwardWeight < upWeight || forwardWeight < downWeight) {
+//        // Decide inclination based on up and down weights
+//        if (upWeight > downWeight) {
+//            inclinationDelta -= 1; // Move upwards
+//        } else if (downWeight > upWeight) {
+//            inclinationDelta += 1; // Move downwards
+//        }
+//    }
+
+    float newAzimuth = spores[idx].azimuth + azimuthDelta * settings->turn_speed * delta_time;
+    float newInclination = spores[idx].inclination + inclinationDelta * settings->turn_speed * delta_time;
+
+    float3 newDirection = (float3)(sin(newInclination) * cos(newAzimuth),
+                                       sin(newInclination) * sin(newAzimuth),
+                                       cos(newInclination));
+
+    float3 newPosition = spores[idx].position + newDirection * settings->spore_speed * delta_time;
 
     // Boundary check and bounce-back logic
-    if (newPosition.x < 0 || newPosition.x >= settings->screen_size || newPosition.y < 0 || newPosition.y >= settings->screen_size || newPosition.z < 0 || newPosition.z >= settings->screen_size) {
-        uint random = hash(random_seeds[idx]);
-        uint random2 = hash(random_seeds[idx] + random);
-        random_seeds[idx] = random2;
+    if (newPosition.x < 0 || newPosition.x >= settings->simulation_size ||
+        newPosition.y < 0 || newPosition.y >= settings->simulation_size ||
+        newPosition.z < 0 || newPosition.z >= settings->simulation_size) {
 
-        float randomAngle = scaleToRange01(random) * 2.0f * M_PI; // M_PI is the PI constant in OpenCL
-        float randomInclination = scaleToRange01(random2) * 2.0f * M_PI; // M_PI is the PI constant in OpenCL
+        // Reverse the direction by adjusting azimuth and inclination
+        // This is a conceptual reversal; in practice, you may need a more nuanced approach
+        newAzimuth += M_PI; // Adding π to the azimuth effectively reverses the direction in the XY plane
+        newInclination += M_PI / 2;
+        // For inclination, consider what reversal means in your application context
+        // This might not be necessary if you simply reverse the XY direction and maintain the current vertical direction
 
-        // Ensure newPosition is within bounds
-        newPosition.x = clamp(newPosition.x, 0.0f, (float)(settings->screen_size - 1));
-        newPosition.y = clamp(newPosition.y, 0.0f, (float)(settings->screen_size - 1));
-        newPosition.z = clamp(newPosition.z, 0.0f, (float)(settings->screen_size - 1));
+        // Ensure newAzimuth is within bounds [0, 2π]
 
+        // Recalculate newDirection with updated azimuth (and possibly inclination)
+        newDirection = (float3)(sin(newInclination) * cos(newAzimuth),
+                                sin(newInclination) * sin(newAzimuth),
+                                cos(newInclination));
 
-        spores[idx].angle = randomAngle;
-        spores[idx].inclination = randomInclination;
+        // Re-calculate newPosition to ensure it's within bounds
+        newPosition = spores[idx].position + newDirection * settings->spore_speed * delta_time;
+        newPosition.x = clamp(newPosition.x, 0.0f, (float)(settings->simulation_size - 1));
+        newPosition.y = clamp(newPosition.y, 0.0f, (float)(settings->simulation_size - 1));
+        newPosition.z = clamp(newPosition.z, 0.0f, (float)(settings->simulation_size - 1));
     }
 
     // If not outside bounds update the spore's position
     spores[idx].position = newPosition;
+    spores[idx].azimuth = newAzimuth;
+    spores[idx].inclination = M_PI / 2;
 }
 
 __kernel void decay_trails(__global float* volume, __global const Settings* settings, const float delta_time) {
@@ -125,9 +231,9 @@ __kernel void decay_trails(__global float* volume, __global const Settings* sett
     uint z = (uint)get_global_id(2);
 
     // Check if the index is within the bounds of the image
-    if (x < settings->screen_size && y < settings->screen_size && z < settings->screen_size) {
+    if (x < settings->simulation_size && y < settings->simulation_size && z < settings->simulation_size) {
         // Calculate the linear index of the pixel
-        uint idx = z * settings->screen_size * settings->screen_size + y * settings->screen_size + x;
+        uint idx = z * settings->simulation_size * settings->simulation_size + y * settings->simulation_size + x;
 
         volume[idx] = max(0.0f, volume[idx] - settings->decay_speed * delta_time);
     }
