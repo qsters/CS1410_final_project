@@ -1,6 +1,7 @@
 import math
 
 import glfw
+import imgui
 import numpy as np
 from OpenGL.GL import *
 from game_engine import GameEngine
@@ -23,12 +24,21 @@ class Simulation3D(GameEngine):
         self.spores = self.initialize_spores()
         self.spores_buffer = self.initialize_buffer(self.spores)
 
-        self.spore_speed = 0
-        self.decay_speed = 10
-        self.sensor_distance = 10
-        self.turn_speed = 5
+        self.spore_speed = 3
+        self.decay_speed = 1
+        self.sensor_distance = 3
+        self.turn_speed = 10
 
-        self.settings = self.create_settings()
+        self.settings_dtype = np.dtype([
+            ('spore_count', np.uint32),
+            ('simulation_size', np.uint32),
+            ('spore_speed', np.float32),
+            ('decay_speed', np.float32),
+            ('turn_speed', np.float32),
+            ('sensor_distance', np.float32),
+        ])
+
+        self.settings = self.create_settings(self.settings_dtype)
         self.settings_buffer = self.initialize_buffer(self.settings)
 
         self.random_seeds = np.random.randint(0, 2 ** 32 - 1, size=self.spore_count, dtype=np.uint32)
@@ -100,45 +110,45 @@ class Simulation3D(GameEngine):
     def initialize_spores(self):
         # Define the structured datatype for a 2D spore
         spore_dtype = np.dtype([
-            ('x', np.float32),  # x position
-            ('y', np.float32),  # y position
-            ('z', np.float32),  # z position
-            ('pad', np.float32),
-            ('azimuth', np.float32),  # z position
-            ('inclination', np.float32),  # z position
+            ('x', np.float32),  # Position Vector
+            ('y', np.float32),
+            ('z', np.float32),
+            ('pad', np.float32),  # Padding for data
+            ('dir_x', np.float32),  # Directino Vector
+            ('dir_y', np.float32),
+            ('dir_z', np.float32),
+            ('pad2', np.float32),  # Padding for data
         ])
 
         # Initialize empty array of spores
         spores = np.zeros(self.spore_count, dtype=spore_dtype)
 
-        spores[0]['x'] = self.simulation_size / 2
-        spores[0]['y'] = self.simulation_size / 2
-        spores[0]['z'] = self.simulation_size / 2
-
-        # # Randomize positions within the bounds of height and width
-        # spores['x'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
-        # spores['y'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
-        # spores['z'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+        # spores[0]['x'] = self.simulation_size / 2
+        # spores[0]['y'] = self.simulation_size / 2
+        # spores[0]['z'] = self.simulation_size / 2
         #
-        # # Generate random direction vectors
-        # # Creating random vectors in spherical coordinates then converting them
-        # spores["azimuth"] = np.random.uniform(0, 2 * np.pi, size=self.spore_count)
-        # spores["inclination"] = np.random.uniform(0, np.pi, size=self.spore_count)  # [0, π] for inclination to cover full sphere
+        # spores[0]['dir_z'] = 1
+
+        # Randomize positions within the bounds of the simulation size
+        spores['x'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+        spores['y'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+        spores['z'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
+
+        # Generate random direction vectors and normalize them
+        directions = np.random.randn(self.spore_count, 3)  # Generate random directions
+        norms = np.linalg.norm(directions, axis=1)[:, np.newaxis]  # Calculate norms
+        normalized_directions = directions / norms  # Normalize
+
+        # Assign normalized directions to spores
+        spores['dir_x'] = normalized_directions[:, 0]
+        spores['dir_y'] = normalized_directions[:, 1]
+        spores['dir_z'] = normalized_directions[:, 2]
 
         return spores
 
-    def create_settings(self):
-        settings_dtype = np.dtype([
-            ('spore_count', np.uint32),
-            ('simulation_size', np.uint32),
-            ('spore_speed', np.float32),
-            ('decay_speed', np.float32),
-            ('turn_speed', np.float32),
-            ('sensor_distance', np.float32),
-        ])
-
+    def create_settings(self, dtype):
         settings = np.array([(self.spore_count, self.simulation_size, self.spore_speed, self.decay_speed,
-                              self.turn_speed, self.sensor_distance)], dtype=settings_dtype)
+                              self.turn_speed, self.sensor_distance)], dtype=dtype)
         return settings
 
     def get_instance_positions_and_sizes(self):
@@ -173,8 +183,8 @@ class Simulation3D(GameEngine):
         self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.volume_buffer, self.spores_buffer,
                                  self.settings_buffer)
 
-        self.program.draw_sensors(self.cl_queue, (self.spore_count,), None, self.volume_buffer, self.spores_buffer,
-                                 self.settings_buffer)
+        # self.program.draw_sensors(self.cl_queue, (self.spore_count,), None, self.volume_buffer, self.spores_buffer,
+        #                          self.settings_buffer)
 
 
         self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.volume_buffer, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
@@ -182,14 +192,57 @@ class Simulation3D(GameEngine):
         self.cl_queue.finish()
 
         cl.enqueue_copy(self.cl_queue, self.volume_data, self.volume_buffer).wait()
-        cl.enqueue_copy(self.cl_queue, self.spores, self.spores_buffer).wait()
-        print("Direction: ", [self.spores[0]['x'], self.spores[0]['y'], self.spores[0]['z']], "Azimuth: ", self.spores[0]['azimuth'], "Inclination: ", self.spores[0]['inclination'])
+        # cl.enqueue_copy(self.cl_queue, self.spores, self.spores_buffer).wait()
+        # print("Position: ", [self.spores[2]['x'], self.spores[2]['y'], self.spores[2]['z']], "Direction: ", [self.spores[2]['dir_x'], self.spores[2]['dir_y'], self.spores[2]['dir_z']])
 
         self.instance_positions, self.instance_sizes = self.get_instance_positions_and_sizes()
         self.renderer.update_instance_data(self.instance_positions, self.instance_sizes)
         self.camera_mover.update_view(self.delta_time)
 
+    def render_gui(self):
+        # Set the window's background alpha (transparency) to 0.7 (1.0 is opaque, 0.0 is transparent)
+        imgui.push_style_var(imgui.STYLE_ALPHA, 0.8)
+
+        # Start a new ImGui window
+        if imgui.begin("Simulation Parameters"):
+
+            # Slider for spore_speed
+            changed, self.spore_speed = imgui.slider_float("Spore Speed", self.spore_speed, 0.1, 10.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
+
+            # Slider for decay_speed
+            changed, self.decay_speed = imgui.slider_float("Decay Speed", self.decay_speed, 0.1, 2.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
+
+            # Slider for sensor_distance
+            changed, self.sensor_distance = imgui.slider_float("Sensor Distance", self.sensor_distance, 1.0, 5.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
+
+            # Slider for turn_speed
+            changed, self.turn_speed = imgui.slider_float("Turn Speed", self.turn_speed, 0.0, 15.0)
+            if changed:
+                # Update the settings buffer if necessary
+                self.update_settings_buffer()
+
+        imgui.end()
+        imgui.pop_style_var()
+
+    def update_settings_buffer(self):
+        # Create a new settings array
+        settings = np.array([(self.spore_count, self.simulation_size,
+                              self.spore_speed, self.decay_speed, self.turn_speed,
+                              self.sensor_distance)], dtype=self.settings_dtype)
+
+        # Update the buffer with the new settings
+        cl.enqueue_copy(self.cl_queue, self.settings_buffer, settings)
+
 
 if __name__ == '__main__':
-    game = Simulation3D(500, 500, 30,  target_framerate=30, spore_count=1)
+    game = Simulation3D(500, 500, 30,  target_framerate=30, spore_count=1000)
     game.run()

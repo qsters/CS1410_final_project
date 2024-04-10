@@ -5,8 +5,7 @@
 
 typedef struct {
     float3 position;  // Use float2 for position
-    float azimuth;
-    float inclination;
+    float3 direction;
 } Spore;
 
 typedef struct {
@@ -21,7 +20,6 @@ typedef struct {
 //// Function prototypes
 uint hash(uint state);
 float scaleToRange01(uint state);
-float3 sph_to_car(float azimuth, float inclination);
 float sense(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
 void draw_sensor(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
 
@@ -43,12 +41,6 @@ float sense(__global Spore* spore, __global float* volume, __global const Settin
         return volume[idx];
 }
 
-float3 sph_to_car(float azimuth, float inclination) {
-    return (float3)(sin(inclination) * cos(azimuth),
-                     sin(inclination) * sin(azimuth),
-                     cos(inclination));
-}
-
 void draw_sensor(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward) {
     // Calculate the sampling position using the direction vector
     float3 averagePos = normalize(forward + direction);
@@ -64,7 +56,7 @@ void draw_sensor(__global Spore* spore, __global float* volume, __global const S
     uint idx = sampleZ * settings->simulation_size * settings->simulation_size + sampleY * settings->simulation_size + sampleX;
 
     // Mark the sensor position in the volume
-    volume[idx] = 1.0; // Assign a value to indicate a sensor's position
+    volume[idx] = 0.5; // Assign a value to indicate a sensor's position
 }
 
 
@@ -109,11 +101,11 @@ __kernel void draw_sensors(__global float* volume, __global Spore* spores, __glo
         return;
     }
 
-    float3 upVector = (float3)(1.0f, 0.0f, 0.0f); // Global up
-    float3 sporeDirection = sph_to_car(spores[idx].azimuth, spores[idx].inclination); // Assuming spores[].direction is already defined
+    float3 globalUp = (float3)(0.0f, 0.0f, 1.0f); // Global up
+    float3 sporeDirection = spores[idx].direction; // Assuming spores[].direction is already defined
 
     // Generate the local right vector
-    float3 rightVector = cross(sporeDirection, upVector);
+    float3 rightVector = cross(sporeDirection, globalUp);
     if (length(rightVector) == 0) { // Handle parallel or antiparallel direction
         // Fallback or adjust rightVector
         rightVector = (float3)(1.0f, 0.0f, 0.0f);
@@ -121,16 +113,15 @@ __kernel void draw_sensors(__global float* volume, __global Spore* spores, __glo
     rightVector = normalize(rightVector);
 
     // Generate local up vector based on right and forward vectors
-    float3 upVectorAdjusted = cross(rightVector, sporeDirection);
-    upVectorAdjusted = normalize(upVectorAdjusted);
+    float3 upVector = cross(rightVector, sporeDirection);
+    upVector = normalize(upVector);
 
     draw_sensor(&spores[idx], volume, settings, sporeDirection, sporeDirection);
-//    draw_sensor(&spores[idx], volume, settings, rightVector, sporeDirection);
+    draw_sensor(&spores[idx], volume, settings, rightVector, sporeDirection);
     draw_sensor(&spores[idx], volume, settings, -rightVector, sporeDirection);
-    draw_sensor(&spores[idx], volume, settings, upVectorAdjusted, sporeDirection);
-    draw_sensor(&spores[idx], volume, settings, -upVectorAdjusted, sporeDirection);
+    draw_sensor(&spores[idx], volume, settings, upVector, sporeDirection);
+    draw_sensor(&spores[idx], volume, settings, -upVector, sporeDirection);
 }
-
 
 
 __kernel void move_spores(__global Spore* spores, __global float* volume, __global uint* random_seeds, __global const Settings* settings, const float delta_time) {
@@ -140,11 +131,11 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
         return;
     }
 
-    float3 upVector = (float3)(-1.0f, 0.0f, 0.0f); // Global up
-    float3 sporeDirection = sph_to_car(spores[idx].azimuth, M_PI / 2); // Assuming spores[].direction is already defined
+    float3 globalUp = (float3)(0.0f, 0.0f, 1.0f); // Global up
+    float3 sporeDirection = spores[idx].direction; // Assuming spores[].direction is already defined
 
     // Generate the local right vector
-    float3 rightVector = cross(sporeDirection, upVector);
+    float3 rightVector = cross(sporeDirection, globalUp);
     if (length(rightVector) == 0) { // Handle parallel or antiparallel direction
         // Fallback or adjust rightVector
         rightVector = (float3)(1.0f, 0.0f, 0.0f);
@@ -152,77 +143,64 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
     rightVector = normalize(rightVector);
 
     // Generate local up vector based on right and forward vectors
-    float3 upVectorAdjusted = cross(rightVector, sporeDirection);
-    upVectorAdjusted = normalize(upVectorAdjusted);
+    float3 upVector = cross(rightVector, sporeDirection);
+    upVector = normalize(upVector);
 
     float forwardWeight = sense(&spores[idx], volume, settings, sporeDirection, sporeDirection);
     float rightWeight = sense(&spores[idx], volume, settings, rightVector, sporeDirection);
     float leftWeight = sense(&spores[idx], volume, settings, -rightVector, sporeDirection);
-    float upWeight = sense(&spores[idx], volume, settings, upVectorAdjusted, sporeDirection);
-    float downWeight = sense(&spores[idx], volume, settings, -upVectorAdjusted, sporeDirection);
+    float upWeight = sense(&spores[idx], volume, settings, upVector, sporeDirection);
+    float downWeight = sense(&spores[idx], volume, settings, -upVector, sporeDirection);
 
-    // Initialize the change in azimuth and inclination
-    float azimuthDelta = 0.1;
-    float inclinationDelta = 0.0;
+    float3 directionChange = (float3)(0,0,0);
 
-//    if (forwardWeight < rightWeight || forwardWeight < leftWeight) {
-//        // Decide turning based on left and right weights
-//        if (rightWeight > leftWeight) {
-//            azimuthDelta -= 1; // Turn right
-//        } else if (leftWeight > rightWeight) {
-//            azimuthDelta += 1; // Turn left
-//        }
-//    }
-//
-//    if (forwardWeight < upWeight || forwardWeight < downWeight) {
-//        // Decide inclination based on up and down weights
-//        if (upWeight > downWeight) {
-//            inclinationDelta -= 1; // Move upwards
-//        } else if (downWeight > upWeight) {
-//            inclinationDelta += 1; // Move downwards
-//        }
-//    }
+    if (forwardWeight < rightWeight || forwardWeight < leftWeight) {
+        // Decide turning based on left and right weights
+        if (rightWeight > leftWeight) {
+            directionChange += rightVector;
+        } else if (leftWeight > rightWeight) {
+            directionChange -= rightVector;
+        }
+    }
 
-    float newAzimuth = spores[idx].azimuth + azimuthDelta * settings->turn_speed * delta_time;
-    float newInclination = spores[idx].inclination + inclinationDelta * settings->turn_speed * delta_time;
+    if (forwardWeight < upWeight || forwardWeight < downWeight) {
+        // Decide inclination based on up and down weights
+        if (upWeight > downWeight) {
+            directionChange += upVector;
+        } else if (downWeight > upWeight) {
+            directionChange -= upVector;
+        }
+    }
 
-    float3 newDirection = (float3)(sin(newInclination) * cos(newAzimuth),
-                                       sin(newInclination) * sin(newAzimuth),
-                                       cos(newInclination));
+    float3 newDirection = sporeDirection + directionChange * settings->spore_speed * delta_time;
+    newDirection = normalize(newDirection);
 
     float3 newPosition = spores[idx].position + newDirection * settings->spore_speed * delta_time;
 
-    // Boundary check and bounce-back logic
-    if (newPosition.x < 0 || newPosition.x >= settings->simulation_size ||
-        newPosition.y < 0 || newPosition.y >= settings->simulation_size ||
-        newPosition.z < 0 || newPosition.z >= settings->simulation_size) {
+    float3 storePosition = newPosition;
 
-        // Reverse the direction by adjusting azimuth and inclination
-        // This is a conceptual reversal; in practice, you may need a more nuanced approach
-        newAzimuth += M_PI; // Adding π to the azimuth effectively reverses the direction in the XY plane
-        newInclination += M_PI / 2;
-        // For inclination, consider what reversal means in your application context
-        // This might not be necessary if you simply reverse the XY direction and maintain the current vertical direction
+    // make sure things are in bounds
+    newPosition.x = clamp(newPosition.x, 0.0f, (float)(settings->simulation_size - 1));
+    newPosition.y = clamp(newPosition.y, 0.0f, (float)(settings->simulation_size - 1));
+    newPosition.z = clamp(newPosition.z, 0.0f, (float)(settings->simulation_size - 1));
 
-        // Ensure newAzimuth is within bounds [0, 2π]
+    if (storePosition.x != newPosition.x) {
+        newDirection.x *= -1;
+    }
 
-        // Recalculate newDirection with updated azimuth (and possibly inclination)
-        newDirection = (float3)(sin(newInclination) * cos(newAzimuth),
-                                sin(newInclination) * sin(newAzimuth),
-                                cos(newInclination));
+    if (storePosition.y != newPosition.y) {
+        newDirection.y *= -1;
+    }
 
-        // Re-calculate newPosition to ensure it's within bounds
-        newPosition = spores[idx].position + newDirection * settings->spore_speed * delta_time;
-        newPosition.x = clamp(newPosition.x, 0.0f, (float)(settings->simulation_size - 1));
-        newPosition.y = clamp(newPosition.y, 0.0f, (float)(settings->simulation_size - 1));
-        newPosition.z = clamp(newPosition.z, 0.0f, (float)(settings->simulation_size - 1));
+    if (storePosition.z != newPosition.z) {
+        newDirection.z *= -1;
     }
 
     // If not outside bounds update the spore's position
     spores[idx].position = newPosition;
-    spores[idx].azimuth = newAzimuth;
-    spores[idx].inclination = M_PI / 2;
+    spores[idx].direction = newDirection;
 }
+
 
 __kernel void decay_trails(__global float* volume, __global const Settings* settings, const float delta_time) {
     // Calculate the 2D index of the current work item
