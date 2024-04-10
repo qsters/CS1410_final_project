@@ -41,7 +41,7 @@ class Simulation3D(GameEngine):
         self.settings = self.create_settings(self.settings_dtype)
         self.settings_buffer = self.initialize_buffer(self.settings)
 
-        self.random_seeds = np.random.randint(0, 2 ** 32 - 1, size=self.spore_count, dtype=np.uint32)
+        self.random_seeds = np.random.randint(0, 2 ** 32 - 1, size=self.spore_count + 1, dtype=np.uint32)
         self.random_seeds_buffer = self.initialize_buffer(self.random_seeds)
 
         self.shader_program = ShaderProgram("Shaders/3D_vertex_shader.glsl", "Shaders/3D_fragment_shader.glsl")
@@ -244,5 +244,5 @@ class Simulation3D(GameEngine):
 
 
 if __name__ == '__main__':
-    game = Simulation3D(500, 500, 30,  target_framerate=30, spore_count=1000)
+    game = Simulation3D(1000, 1000, 30,  target_framerate=30, spore_count=1000)
     game.run()

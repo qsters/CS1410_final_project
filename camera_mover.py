@@ -58,4 +58,9 @@ class CameraMover:
         self.camera_pitch += self.camera_delta.y * delta_time * self.camera_speed
         self.camera_yaw -= self.camera_delta.x * delta_time * self.camera_speed
 
+        # # Clamp camera pitch to prevent 'flipping'
+        pitch_limit = 89.0
+        self.camera_pitch = max(-pitch_limit, min(self.camera_pitch, pitch_limit))
+
+
         self.view = self.get_current_view()

@@ -18,8 +18,8 @@ typedef struct {
 } Settings;
 
 //// Function prototypes
-uint hash(uint state);
-float scaleToRange01(uint state);
+uint hash(uint x);
+float scaleToRange01(uint x);
 float sense(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
 void draw_sensor(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
 
@@ -60,19 +60,18 @@ void draw_sensor(__global Spore* spore, __global float* volume, __global const S
 }
 
 
-uint hash(uint state) {
-    state ^= 2747636419u;
-    state *= 2654435769u;
-    state ^= state >> 16;
-    state *= 2654435769u;
-    state ^= state >> 16;
-    state *= 2654435769u;
-    return state;
+uint hash(uint x) {
+    x += (x << 10);
+    x ^= (x >> 6);
+    x += (x << 3);
+    x ^= (x >> 11);
+    x += (x << 15);
+    return x;
 }
 
-float scaleToRange01(uint state) {
+float scaleToRange01(uint x) {
     // Explicitly specify the divisor as a float to ensure floating-point division.
-    return (float)state / 4294967295.0f;
+    return x / (float)0xFFFFFFFF;
 }
 
 __kernel void draw_spores(__global float* volume, __global Spore* spores, __global const Settings* settings) {
@@ -184,16 +183,30 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
     newPosition.y = clamp(newPosition.y, 0.0f, (float)(settings->simulation_size - 1));
     newPosition.z = clamp(newPosition.z, 0.0f, (float)(settings->simulation_size - 1));
 
-    if (storePosition.x != newPosition.x) {
-        newDirection.x *= -1;
-    }
+    // Boundary check and bounce-back logic
+    if (newPosition.x != storePosition.x || newPosition.y != storePosition.y || newPosition.z != storePosition.z) {
+        float random1 = hash(random_seeds[idx]);
+        float random2 = hash(random_seeds[idx + 1]);
 
-    if (storePosition.y != newPosition.y) {
-        newDirection.y *= -1;
-    }
+        random_seeds[idx] = random2;
+        random_seeds[idx + 1] = random1;
 
-    if (storePosition.z != newPosition.z) {
-        newDirection.z *= -1;
+        random1 = scaleToRange01(random1);
+        random2 = scaleToRange01(random2);
+
+        float theta = random1 * 2.0f * M_PI; // [0, 2π]
+        // Uniformly sample cos(φ) from [-1, 1] and calculate φ from that
+        float z = random2 * 2.0f - 1.0f; // z = cos(φ), [-1, 1]
+
+        // Directly use z as the z-component, calculate the radius of the circle at z
+        float r = sqrt(1.0f - z * z);
+
+        // Calculate the x and y components based on r and theta
+        float x = r * cos(theta);
+        float y = r * sin(theta);
+
+        float3 randomDirection = (float3)(x,y,z);
+        newDirection = randomDirection;
     }
 
     // If not outside bounds update the spore's position
