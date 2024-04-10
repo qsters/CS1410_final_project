@@ -5,8 +5,10 @@ import os
 import time
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
+from abc import ABC, abstractmethod
 
-class GameEngine:
+
+class GameEngine(ABC):
     def __init__(self, width, height, title, cl_file, target_framerate):
         self.window_width = width
         self.window_height = height
@@ -22,10 +24,11 @@ class GameEngine:
         self.delta_time = 0.0
         self.frame_rate = 0
 
-    def initialize_window(self, window_width, window_height, window_title):
+    @staticmethod
+    def initialize_window(window_width, window_height, window_title):
+        """Initializes glfw window"""
         if not glfw.init():
             raise Exception("Failed to initialize GLFW")
-            exit(1)
 
         # OS X supports only forward-compatible core profiles from 3.2
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
@@ -40,16 +43,15 @@ class GameEngine:
         if not window:
             glfw.terminate()
             raise Exception("Failed to create GLFW window")
-            exit(1)
 
         return window
 
-
-
-    def initialize_opencl(self):
+    @staticmethod
+    def initialize_opencl():
+        """Initialize openCL, chooses device to be the first GPU detected"""
         os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
-        platform = cl.get_platforms()[0]
-        devices = platform.get_devices()
+        cl_platform = cl.get_platforms()[0]
+        devices = cl_platform.get_devices()
         gpu_devices = [device for device in devices if device.type == cl.device_type.GPU]
         if not gpu_devices:
             print("No GPU device found.")
@@ -62,31 +64,42 @@ class GameEngine:
         return context, queue
 
     def run(self):
+        """Main loop of game"""
         print("Starting Program...")
+
+        # Vars for tracking frame count and framerate
         frame_count = 0
         second_timer = glfw.get_time()
+
+        # Main Loop
         while not glfw.window_should_close(self.window):
+            # Framerate tracking
             current_time = glfw.get_time()
             self.delta_time = current_time - self.last_frame_time
             self.last_frame_time = current_time
-            self.impl.process_inputs()
 
+            # Input processing
+            self.impl.process_inputs()
             glfw.poll_events()
 
+            # Run update function
             self.update()
 
+            # Clear screen to black
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
+            # Render function
             self.render()
 
+            # GUI stuff
             imgui.new_frame()
             self.render_gui()
             imgui.end_frame()
             imgui.render()
-
             self.impl.render(imgui.get_draw_data())
+
+            # Swap window buffers
             glfw.swap_buffers(self.window)
-            self.post_render()
 
             # Frame rate calculation
             frame_count += 1
@@ -100,11 +113,13 @@ class GameEngine:
             if time_to_wait > 0:
                 time.sleep(time_to_wait)
 
+        # Cleanup
         self.impl.shutdown()
         glfw.terminate()
 
     # Helper Functions
-    def load_file(self, filename):
+    @staticmethod
+    def load_file(filename):
         with open(filename, 'r') as file:
             return file.read()
 
@@ -117,19 +132,17 @@ class GameEngine:
         buf = cl.Buffer(self.cl_context, cl.mem_flags.READ_WRITE | cl.mem_flags.COPY_HOST_PTR, hostbuf=data)
         return buf
 
-    # Methods meant to be overridden
+    @abstractmethod
     def update(self):
         """Updates before rendering every frame"""
         pass
 
+    @abstractmethod
     def render(self):
         """Renders after the update every frame"""
         pass
 
-    def post_render(self):
-        """Called once after rendering"""
-        pass
-
+    @abstractmethod
     def render_gui(self):
         """Called after rendering, for rendering the GUI"""
         pass

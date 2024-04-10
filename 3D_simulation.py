@@ -1,6 +1,3 @@
-import math
-
-import glfw
 import imgui
 import numpy as np
 from OpenGL.GL import *
@@ -9,26 +6,27 @@ import glm
 import pyopencl as cl
 
 from shader_program import ShaderProgram
-from renderer_3D import Renderer3D
-from camera_mover import CameraMover
+from simulation_renderer_3D import SimulationRenderer3D
+from camera_mover import CameraHandler3D
 
 
 class Simulation3D(GameEngine):
     def __init__(self, window_width, window_height, simulation_size=10, spore_count=300, title="Slime Mold Sim 2D",
                  target_framerate=60):
         super().__init__(window_width, window_height, title, "Shaders/3d_simulation.cl", target_framerate)
-
+        # Set basic values
         self.simulation_size = simulation_size
 
         self.spore_count = spore_count
         self.spores = self.initialize_spores()
         self.spores_buffer = self.initialize_buffer(self.spores)
 
-        self.spore_speed = 3
-        self.decay_speed = 1
-        self.sensor_distance = 3
-        self.turn_speed = 10
+        self.spore_speed = 4
+        self.decay_speed = 0.6
+        self.sensor_distance = 5
+        self.turn_speed = 6
 
+        # Dtype for the settings
         self.settings_dtype = np.dtype([
             ('spore_count', np.uint32),
             ('simulation_size', np.uint32),
@@ -38,17 +36,26 @@ class Simulation3D(GameEngine):
             ('sensor_distance', np.float32),
         ])
 
-        self.settings = self.create_settings(self.settings_dtype)
+        # Buffers
+
+        # Settings Buffer
+        self.settings = np.array([(self.spore_count, self.simulation_size, self.spore_speed, self.decay_speed,
+                                   self.turn_speed, self.sensor_distance)], dtype=self.settings_dtype)
         self.settings_buffer = self.initialize_buffer(self.settings)
 
+        # Random Seeds buffer
         self.random_seeds = np.random.randint(0, 2 ** 32 - 1, size=self.spore_count + 1, dtype=np.uint32)
         self.random_seeds_buffer = self.initialize_buffer(self.random_seeds)
 
-        self.shader_program = ShaderProgram("Shaders/3D_vertex_shader.glsl", "Shaders/3D_fragment_shader.glsl")
-
+        # Volume Buffer
         self.volume_data = self.get_empty_volume()
         self.volume_buffer = self.initialize_buffer(self.volume_data)
 
+        # Setup Shader program
+        self.shader_program = ShaderProgram("Shaders/3D_vertex_shader.glsl", "Shaders/3D_fragment_shader.glsl")
+
+
+        # Get instance data
         self.instance_positions, self.instance_sizes = self.get_instance_positions_and_sizes()
 
         # Vertex data: positions and texture coordinates for a fullscreen quad
@@ -74,8 +81,9 @@ class Simulation3D(GameEngine):
             3, 2, 6, 6, 7, 3  # Top face
         ], dtype=np.uint32)
 
-        self.renderer = Renderer3D(self.shader_program.program, self.instance_positions, self.instance_sizes, vertices,
-                                   indices)
+        # Setup renderer
+        self.renderer = SimulationRenderer3D(self.shader_program.program, self.instance_positions, self.instance_sizes, vertices,
+                                             indices)
 
         # Add the uniforms for the shaders
         self.renderer.add_uniform_location("simulationSize")
@@ -83,6 +91,7 @@ class Simulation3D(GameEngine):
         self.renderer.add_uniform_location("view")
         self.renderer.add_uniform_location("projection")
 
+        # Setup camera stuff
         simulation_center = glm.vec3(
             self.simulation_size / 2,
             self.simulation_size / 2,
@@ -101,13 +110,15 @@ class Simulation3D(GameEngine):
         self.projection = glm.perspective(glm.radians(45), self.window_width / self.window_height, 0.1,
                                           camera_distance * 2)
 
-        self.camera_mover = CameraMover(45.0, 45.0, simulation_center, camera_distance, camera_speed, self.window)
+        self.camera_mover = CameraHandler3D(45.0, 45.0, simulation_center, camera_distance, camera_speed, self.window)
 
     def get_empty_volume(self):
+        """Generates empty volume by the simulation size"""
         volume = np.zeros((self.simulation_size, self.simulation_size, self.simulation_size), dtype=np.float32)
         return volume
 
     def initialize_spores(self):
+        """Creates spores with random values"""
         # Define the structured datatype for a 2D spore
         spore_dtype = np.dtype([
             ('x', np.float32),  # Position Vector
@@ -122,12 +133,6 @@ class Simulation3D(GameEngine):
 
         # Initialize empty array of spores
         spores = np.zeros(self.spore_count, dtype=spore_dtype)
-
-        # spores[0]['x'] = self.simulation_size / 2
-        # spores[0]['y'] = self.simulation_size / 2
-        # spores[0]['z'] = self.simulation_size / 2
-        #
-        # spores[0]['dir_z'] = 1
 
         # Randomize positions within the bounds of the simulation size
         spores['x'] = np.random.uniform(0, self.simulation_size, size=self.spore_count)
@@ -145,11 +150,6 @@ class Simulation3D(GameEngine):
         spores['dir_z'] = normalized_directions[:, 2]
 
         return spores
-
-    def create_settings(self, dtype):
-        settings = np.array([(self.spore_count, self.simulation_size, self.spore_speed, self.decay_speed,
-                              self.turn_speed, self.sensor_distance)], dtype=dtype)
-        return settings
 
     def get_instance_positions_and_sizes(self):
         # Find indices where value > 0
@@ -178,22 +178,20 @@ class Simulation3D(GameEngine):
         self.renderer.draw(len(self.instance_positions))
 
     def update(self):
-        self.program.decay_trails(self.cl_queue, (self.simulation_size, self.simulation_size, self.simulation_size), None, self.volume_buffer, self.settings_buffer, np.float32(self.delta_time))
+        """Runs Kernels, updates data, and camera position"""
 
-        self.program.draw_spores(self.cl_queue, (self.spore_count,), None, self.volume_buffer, self.spores_buffer,
-                                 self.settings_buffer)
+        self.program.decay_trails(self.cl_queue, (self.simulation_size, self.simulation_size, self.simulation_size),
+                                  None, self.volume_buffer, self.settings_buffer, np.float32(self.delta_time))
 
-        # self.program.draw_sensors(self.cl_queue, (self.spore_count,), None, self.volume_buffer, self.spores_buffer,
-        #                          self.settings_buffer)
+        self.program.draw_spores(self.cl_queue, (self.spore_count,), None,
+                                 self.volume_buffer, self.spores_buffer, self.settings_buffer)
 
-
-        self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.volume_buffer, self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
+        self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.volume_buffer,
+                                 self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
 
         self.cl_queue.finish()
 
         cl.enqueue_copy(self.cl_queue, self.volume_data, self.volume_buffer).wait()
-        # cl.enqueue_copy(self.cl_queue, self.spores, self.spores_buffer).wait()
-        # print("Position: ", [self.spores[2]['x'], self.spores[2]['y'], self.spores[2]['z']], "Direction: ", [self.spores[2]['dir_x'], self.spores[2]['dir_y'], self.spores[2]['dir_z']])
 
         self.instance_positions, self.instance_sizes = self.get_instance_positions_and_sizes()
         self.renderer.update_instance_data(self.instance_positions, self.instance_sizes)
@@ -207,25 +205,25 @@ class Simulation3D(GameEngine):
         if imgui.begin("Simulation Parameters"):
 
             # Slider for spore_speed
-            changed, self.spore_speed = imgui.slider_float("Spore Speed", self.spore_speed, 0.1, 10.0)
+            changed, self.spore_speed = imgui.slider_float("Spore Speed", self.spore_speed, 0.1, 30.0)
             if changed:
                 # Update the settings buffer if necessary
                 self.update_settings_buffer()
 
             # Slider for decay_speed
-            changed, self.decay_speed = imgui.slider_float("Decay Speed", self.decay_speed, 0.1, 2.0)
+            changed, self.decay_speed = imgui.slider_float("Decay Speed", self.decay_speed, 0.01, 2.0)
             if changed:
                 # Update the settings buffer if necessary
                 self.update_settings_buffer()
 
             # Slider for sensor_distance
-            changed, self.sensor_distance = imgui.slider_float("Sensor Distance", self.sensor_distance, 1.0, 5.0)
+            changed, self.sensor_distance = imgui.slider_float("Sensor Distance", self.sensor_distance, 1.0, 20.0)
             if changed:
                 # Update the settings buffer if necessary
                 self.update_settings_buffer()
 
             # Slider for turn_speed
-            changed, self.turn_speed = imgui.slider_float("Turn Speed", self.turn_speed, 0.0, 15.0)
+            changed, self.turn_speed = imgui.slider_float("Turn Speed", self.turn_speed, 0.0, 25.0)
             if changed:
                 # Update the settings buffer if necessary
                 self.update_settings_buffer()
@@ -242,7 +240,6 @@ class Simulation3D(GameEngine):
         # Update the buffer with the new settings
         cl.enqueue_copy(self.cl_queue, self.settings_buffer, settings)
 
-
 if __name__ == '__main__':
-    game = Simulation3D(1000, 1000, 30,  target_framerate=30, spore_count=1000)
+    game = Simulation3D(1000, 1000, 100,  target_framerate=30, spore_count=10000)
     game.run()

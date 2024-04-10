@@ -18,5 +18,5 @@ void main()
     vec3 color = mix(baseColor, normalizedPos, 0.9);
 
     // Use the calculated color for the fragment color
-    FragColor = vec4(color, 0.5);
+    FragColor = vec4(color, 1);
 }

@@ -2,12 +2,13 @@
 #define M_PI 3.14159265358979323846f
 #endif
 
-
+// Spore Datatype
 typedef struct {
-    float3 position;  // Use float2 for position
+    float3 position;
     float3 direction;
 } Spore;
 
+// Settings Datatype
 typedef struct {
     uint spore_count;
     uint simulation_size;
@@ -23,6 +24,7 @@ float scaleToRange01(uint x);
 float sense(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
 void draw_sensor(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward);
 
+// Returns the value of the volume at the averaged vector between the direction and the forward vector
 float sense(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward) {
         // Calculate the sampling position using the direction vector
         float3 averagePos = normalize(forward + direction);
@@ -41,6 +43,7 @@ float sense(__global Spore* spore, __global float* volume, __global const Settin
         return volume[idx];
 }
 
+// Debugging function, for drawing the spores just how the sensors are accessed above
 void draw_sensor(__global Spore* spore, __global float* volume, __global const Settings* settings, float3 direction, float3 forward) {
     // Calculate the sampling position using the direction vector
     float3 averagePos = normalize(forward + direction);
@@ -59,7 +62,7 @@ void draw_sensor(__global Spore* spore, __global float* volume, __global const S
     volume[idx] = 0.5; // Assign a value to indicate a sensor's position
 }
 
-
+// Hash (random) function
 uint hash(uint x) {
     x += (x << 10);
     x ^= (x >> 6);
@@ -69,11 +72,13 @@ uint hash(uint x) {
     return x;
 }
 
+// Scales a uint to normalized float (0 - 1)
 float scaleToRange01(uint x) {
     // Explicitly specify the divisor as a float to ensure floating-point division.
     return x / (float)0xFFFFFFFF;
 }
 
+// Kernel that updates volume data where spores are.
 __kernel void draw_spores(__global float* volume, __global Spore* spores, __global const Settings* settings) {
     uint idx = (uint)get_global_id(0);
 
@@ -93,6 +98,7 @@ __kernel void draw_spores(__global float* volume, __global Spore* spores, __glob
     }
 }
 
+// Debug Kernel, for drawing the sensors
 __kernel void draw_sensors(__global float* volume, __global Spore* spores, __global const Settings* settings) {
     uint idx = get_global_id(0);
 
@@ -122,7 +128,7 @@ __kernel void draw_sensors(__global float* volume, __global Spore* spores, __glo
     draw_sensor(&spores[idx], volume, settings, -upVector, sporeDirection);
 }
 
-
+// Moves the spores forward based on the weighted sensors, if hit a boundary, randomly bouce
 __kernel void move_spores(__global Spore* spores, __global float* volume, __global uint* random_seeds, __global const Settings* settings, const float delta_time) {
     uint idx = (uint)get_global_id(0);
 
@@ -131,11 +137,12 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
     }
 
     float3 globalUp = (float3)(0.0f, 0.0f, 1.0f); // Global up
-    float3 sporeDirection = spores[idx].direction; // Assuming spores[].direction is already defined
+    float3 sporeDirection = spores[idx].direction;
 
     // Generate the local right vector
     float3 rightVector = cross(sporeDirection, globalUp);
-    if (length(rightVector) == 0) { // Handle parallel or antiparallel direction
+    // Handle parallel or antiparallel direction
+    if (length(rightVector) == 0) {
         // Fallback or adjust rightVector
         rightVector = (float3)(1.0f, 0.0f, 0.0f);
     }
@@ -145,6 +152,7 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
     float3 upVector = cross(rightVector, sporeDirection);
     upVector = normalize(upVector);
 
+    // Sense weights
     float forwardWeight = sense(&spores[idx], volume, settings, sporeDirection, sporeDirection);
     float rightWeight = sense(&spores[idx], volume, settings, rightVector, sporeDirection);
     float leftWeight = sense(&spores[idx], volume, settings, -rightVector, sporeDirection);
@@ -153,8 +161,9 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
 
     float3 directionChange = (float3)(0,0,0);
 
+
+    // Add directions based on weights
     if (forwardWeight < rightWeight || forwardWeight < leftWeight) {
-        // Decide turning based on left and right weights
         if (rightWeight > leftWeight) {
             directionChange += rightVector;
         } else if (leftWeight > rightWeight) {
@@ -171,20 +180,23 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
         }
     }
 
+    // Set the new direction
     float3 newDirection = sporeDirection + directionChange * settings->spore_speed * delta_time;
     newDirection = normalize(newDirection);
 
     float3 newPosition = spores[idx].position + newDirection * settings->spore_speed * delta_time;
 
+    // Store position for future check
     float3 storePosition = newPosition;
 
-    // make sure things are in bounds
+    // Clamp all positions to inside the boundary
     newPosition.x = clamp(newPosition.x, 0.0f, (float)(settings->simulation_size - 1));
     newPosition.y = clamp(newPosition.y, 0.0f, (float)(settings->simulation_size - 1));
     newPosition.z = clamp(newPosition.z, 0.0f, (float)(settings->simulation_size - 1));
 
     // Boundary check and bounce-back logic
     if (newPosition.x != storePosition.x || newPosition.y != storePosition.y || newPosition.z != storePosition.z) {
+        // Get random values
         float random1 = hash(random_seeds[idx]);
         float random2 = hash(random_seeds[idx + 1]);
 
@@ -194,27 +206,26 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
         random1 = scaleToRange01(random1);
         random2 = scaleToRange01(random2);
 
-        float theta = random1 * 2.0f * M_PI; // [0, 2π]
-        // Uniformly sample cos(φ) from [-1, 1] and calculate φ from that
-        float z = random2 * 2.0f - 1.0f; // z = cos(φ), [-1, 1]
-
-        // Directly use z as the z-component, calculate the radius of the circle at z
+        // Get random direction
+        float theta = random1 * 2.0f * M_PI;
+        float z = random2 * 2.0f - 1.0f;
         float r = sqrt(1.0f - z * z);
 
-        // Calculate the x and y components based on r and theta
         float x = r * cos(theta);
         float y = r * sin(theta);
 
         float3 randomDirection = (float3)(x,y,z);
+
+        // Set new direction to that random direction
         newDirection = randomDirection;
     }
 
-    // If not outside bounds update the spore's position
+    // Update values
     spores[idx].position = newPosition;
     spores[idx].direction = newDirection;
 }
 
-
+// Decays each volume position by the decay speed
 __kernel void decay_trails(__global float* volume, __global const Settings* settings, const float delta_time) {
     // Calculate the 2D index of the current work item
     uint x = (uint)get_global_id(0);

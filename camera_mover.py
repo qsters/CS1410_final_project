@@ -2,7 +2,7 @@ import glm
 import math
 import glfw
 
-class CameraMover:
+class CameraHandler3D:
     def __init__(self, camera_yaw, camera_pitch, look_at, camera_distance, camera_speed, window):
         self.camera_yaw = camera_yaw
         self.camera_pitch = camera_pitch
@@ -18,7 +18,6 @@ class CameraMover:
         if window:
             glfw.set_key_callback(window, self.key_callback)
 
-
     def key_callback(self, window, key, scancode, action, mods):
         # Adjust the camera's yaw and pitch based on arrow key input
         if action == glfw.PRESS or action == glfw.REPEAT:
@@ -32,7 +31,6 @@ class CameraMover:
                 self.camera_delta[0] = -1
         else:
             self.camera_delta *= 0
-
 
     def get_current_view(self):
         # Recalculate the camera front vector
@@ -61,6 +59,5 @@ class CameraMover:
         # # Clamp camera pitch to prevent 'flipping'
         pitch_limit = 89.0
         self.camera_pitch = max(-pitch_limit, min(self.camera_pitch, pitch_limit))
-
 
         self.view = self.get_current_view()

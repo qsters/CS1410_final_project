@@ -1,21 +1,25 @@
 from OpenGL.GL import *
 import numpy as np
 
-class Renderer3D:
+class SimulationRenderer3D:
     def __init__(self, shader_program, instance_positions, instance_sizes, vertices, indices):
         self.shader_program = shader_program
-        self.position_instance_vbo, self.size_instance_vbo = self.get_instance_buffers(instance_positions, instance_sizes)
 
+        # Get instance Buffers
+        instances = self.get_instance_buffers(instance_positions, instance_sizes)
+        (self.position_instance_vbo, self.size_instance_vbo) = instances
+
+        # Get rendering buffers
         self.vao, self.vbo, self.ebo = self.setup_rendering(vertices, indices)
 
+        # Dict for storing the uniform locations
         self.uniform_locations = {}
 
         glEnable(GL_DEPTH_TEST)  # Enable depth test
-        # Setup for rendering, such as enabling depth testing
 
-    def add_uniform_location(self, name):
-        self.uniform_locations[name] = glGetUniformLocation(self.shader_program, name)
-
+    def add_uniform_location(self, location_name):
+        """Adds a uniform location to the Dict"""
+        self.uniform_locations[location_name] = glGetUniformLocation(self.shader_program, location_name)
 
     def get_instance_buffers(self, instance_positions, instance_sizes):
         # Generate and bind the buffer for instance positions
@@ -32,6 +36,7 @@ class Renderer3D:
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
         return instance_positions_vbo, instance_sizes_vbo
+
     def setup_rendering(self, vertices, indices):
         # Create and bind the Vertex Array Object
         vao = glGenVertexArrays(1)
@@ -61,10 +66,9 @@ class Renderer3D:
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
         return vao, vbo, ebo
-    # Implementation similar to your current setup_rendering, but abstracted
-    # to be reusable for different types of objects and shaders
 
     def draw(self, num_instances):
+        """Actual render function, num_instances is the number of cube instances being rendered"""
         # Bind VAO
         glBindVertexArray(self.vao)
 
