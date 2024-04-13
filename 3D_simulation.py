@@ -21,10 +21,10 @@ class Simulation3D(GameEngine):
         self.spores = self.initialize_spores()
         self.spores_buffer = self.initialize_buffer(self.spores)
 
-        self.spore_speed = 4
-        self.decay_speed = 0.6
-        self.sensor_distance = 5
-        self.turn_speed = 6
+        self.spore_speed = 17
+        self.decay_speed = 0.4
+        self.sensor_distance = 14
+        self.turn_speed = 11
 
         # Dtype for the settings
         self.settings_dtype = np.dtype([
@@ -98,8 +98,8 @@ class Simulation3D(GameEngine):
             self.simulation_size / 2
         )
 
-        camera_multiplier = 2.5
-        camera_distance = self.simulation_size * camera_multiplier  # Adjust multiplier as needed for best view
+        camera_multiplier = 2.5  # Adjust multiplier as needed for best view
+        camera_distance = self.simulation_size * camera_multiplier
 
         camera_speed = 3
 
