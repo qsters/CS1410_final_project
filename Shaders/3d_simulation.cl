@@ -186,9 +186,6 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
 
     float3 newPosition = spores[idx].position + newDirection * settings->spore_speed * delta_time;
 
-    // Store position for future check
-    float3 storePosition = newPosition;
-
     bool hitBoundary = false;
 
     float3 randomMask = (float3)(1,1,1);
