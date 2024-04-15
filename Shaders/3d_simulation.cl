@@ -186,54 +186,20 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
 
     float3 newPosition = spores[idx].position + newDirection * settings->spore_speed * delta_time;
 
-    bool hitBoundary = false;
+    // Store position for future check
+    float3 storePosition = newPosition;
 
-    float3 randomMask = (float3)(1,1,1);
+    // Clamp all positions to inside the boundary
+    newPosition = clamp(newPosition, 0.0f, (float)(settings->simulation_size - 1));
 
-    // When hits boundary, flip direction, and set mask
-    if (newPosition.x <= 0)
-    {
-        hitBoundary = true;
-        newDirection.x = 1;
-        randomMask.x = 0;
-    } else if (newPosition.x >= settings->simulation_size)
-    {
-        hitBoundary = true;
-        newDirection.x = -1;
-        randomMask.x = 0;
-    }
+    int3 hitMask = (newPosition != storePosition); // Direct comparison for hit detection
+    bool hitBoundary = any(hitMask); // Check if any component hit a boundary
 
-    if (newPosition.y <= 0)
-    {
-        hitBoundary = true;
-        newDirection.y = 1;
-        randomMask.y = 0;
-    } else if (newPosition.y >= settings->simulation_size)
-    {
-        hitBoundary = true;
-        newDirection.y = -1;
-        randomMask.y = 0;
-    }
-
-    if (newPosition.z <= 0)
-    {
-        hitBoundary = true;
-        newDirection.z = 1;
-        randomMask.z = 0;
-    } else if (newPosition.z >= settings->simulation_size)
-    {
-        hitBoundary = true;
-        newDirection.z = -1;
-        randomMask.z = 0;
-    }
+    // Create a mask for unaffected components
+    float3 randomMask = 1.0f - convert_float3(hitMask);
 
     // Boundary check and bounce-back logic
     if (hitBoundary) {
-        // Clamp all positions to inside the boundary
-        newPosition.x = clamp(newPosition.x, 0.1f, (float)(settings->simulation_size - 1.1));
-        newPosition.y = clamp(newPosition.y, 0.1f, (float)(settings->simulation_size - 1.1));
-        newPosition.z = clamp(newPosition.z, 0.1f, (float)(settings->simulation_size - 1.1));
-
         // Get random values
         float random1 = hash(random_seeds[idx]);
         float random2 = hash(random_seeds[idx + 1]);
@@ -256,6 +222,12 @@ __kernel void move_spores(__global Spore* spores, __global float* volume, __glob
 
         // Apply mask to random value and normalize, apply randomness scale (sort of)
         float3 randomDirection = normalize((float3)(x,y,z) * randomMask);
+
+        // Flip direction
+        newDirection *= -1;
+
+        // Set the direction of bounce, plus weight in to prevent wall hugging.
+        newDirection = normalize(newDirection * (1 - randomMask)) * 1.5f;
 
         // Add random offset (masked side will not be affected)
         newDirection += randomDirection;
