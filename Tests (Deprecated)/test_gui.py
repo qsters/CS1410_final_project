@@ -1,11 +1,5 @@
-import pyopencl as cl
-import glfw
-from OpenGL.GL import *
-import os
-import time
 import imgui
-from imgui.integrations.glfw import GlfwRenderer
-from game_engine import GameEngine  # Assuming GameEngine is in game_engine.py
+from Submit.game_engine import GameEngine  # Assuming GameEngine is in game_engine.py
 
 class GameEngineWithGUI(GameEngine):
     def __init__(self, width, height, title, cl_file="Shaders/2d_simulation.cl", target_framerate=60):
@@ -26,6 +20,12 @@ class GameEngineWithGUI(GameEngine):
             _, self.f = imgui.slider_float("float", self.f, 0.25, 1.5)
 
             imgui.end()
+
+    def render(self):
+        pass
+
+    def update(self):
+        pass
 
 if __name__ == "__main__":
     game = GameEngineWithGUI(1280, 720, "Game Engine with GUI Test")

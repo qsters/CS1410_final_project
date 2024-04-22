@@ -1,7 +1,7 @@
 import pyopencl as cl
 import numpy as np
 from OpenGL.GL import *
-from game_engine import GameEngine
+from Submit.game_engine import GameEngine
 
 
 class ConwaysGameOfLife(GameEngine):
@@ -50,6 +50,9 @@ class ConwaysGameOfLife(GameEngine):
     def update(self):
         self.program.game_of_life(self.cl_queue, (self.window_width, self.window_height), None, self.image_buf, self.new_image_buf, np.uint32(self.window_width), np.uint32(self.window_height))
         cl.enqueue_copy(self.cl_queue, self.image_data, self.new_image_buf).wait()
+
+    def render_gui(self):
+        pass
 
 if __name__ == '__main__':
     game = ConwaysGameOfLife(700, 700)

@@ -4,18 +4,18 @@ import imgui
 import pyopencl as cl
 import numpy as np
 from OpenGL.GL import *
-from game_engine import GameEngine
+from Submit.game_engine import GameEngine
 
 class Simulation2D(GameEngine):
     def __init__(self, width, height, spore_count=300, title="Slime Mold Sim 2D", target_framerate=60):
-        super().__init__(width, height, title, "Shaders/2d_simulation.cl", target_framerate)
+        super().__init__(width, height, title, "../Submit/Shaders/2d_simulation.cl", target_framerate)
 
         self.image_data = self.get_empty_image()
         self.image_buf, _ = self.initialize_buffers(self.image_data)
         self.texture = self.initialize_texture()
 
-        self.fragment_shader = self.load_file("Shaders/2D_fragment_shader.glsl")
-        self.vertex_shader = self.load_file("Shaders/2D_vertex_shader.glsl")
+        self.fragment_shader = self.load_file("../Submit/Shaders/2D_fragment_shader.glsl")
+        self.vertex_shader = self.load_file("../Submit/Shaders/2D_vertex_shader.glsl")
 
         self.spore_count = spore_count
         self.spores = self.initialize_spores()
