@@ -21,10 +21,14 @@ class Simulation3D(GameEngine):
         self.spores = self.initialize_spores()
         self.spores_buffer = self.initialize_buffer(self.spores)
 
-        self.spore_speed = 5.5
+        # self.spore_speed = 5.5
+        # self.decay_speed = 0.4
+        # self.sensor_distance = 4.6
+        # self.turn_speed = 7
+        self.spore_speed = 3
         self.decay_speed = 0.4
-        self.sensor_distance = 2.6
-        self.turn_speed = 7
+        self.sensor_distance = 4.6
+        self.turn_speed = 0
 
         # Dtype for the settings
         self.settings_dtype = np.dtype([
@@ -149,6 +153,15 @@ class Simulation3D(GameEngine):
         spores['dir_y'] = normalized_directions[:, 1]
         spores['dir_z'] = normalized_directions[:, 2]
 
+        spores['x'][0] = 25
+        spores['y'][0] = 25
+        spores['z'][0] = 25
+
+        spores['dir_x'][0] = 0
+        spores['dir_y'][0] = 0
+        spores['dir_z'][0] = 1
+
+
         return spores
 
     def get_instance_positions_and_sizes(self):
@@ -183,6 +196,7 @@ class Simulation3D(GameEngine):
         self.decay_spores()
         self.draw_spores()
         self.move_spores()
+        self.sense_and_turn(debug=True)
 
         self.volume_buffer = self.initialize_buffer(self.volume_data)
 
@@ -190,10 +204,10 @@ class Simulation3D(GameEngine):
         # self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.volume_buffer,
         #                          self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
 
-        self.cl_queue.finish()
+        # self.cl_queue.finish()
 
-        cl.enqueue_copy(self.cl_queue, self.volume_data, self.volume_buffer).wait()
-        cl.enqueue_copy(self.cl_queue, self.spores, self.spores_buffer).wait()
+        # cl.enqueue_copy(self.cl_queue, self.volume_data, self.volume_buffer).wait()
+        # cl.enqueue_copy(self.cl_queue, self.spores, self.spores_buffer).wait()
 
         self.instance_positions, self.instance_sizes = self.get_instance_positions_and_sizes()
         self.renderer.update_instance_data(self.instance_positions, self.instance_sizes)
@@ -220,59 +234,73 @@ class Simulation3D(GameEngine):
         self.volume_data[x, y, z] = 1
 
     def move_spores(self):
-        global_up = np.array([0.0, 0.0, 1.0])
+        """Move spores in their respective directions by the current spore speed."""
+        # Calculate the change in position for each spore based on their direction and speed
+        delta_x = self.spores['dir_x'] * self.spore_speed * self.delta_time
+        delta_y = self.spores['dir_y'] * self.spore_speed * self.delta_time
+        delta_z = self.spores['dir_z'] * self.spore_speed * self.delta_time
 
-        # Array for new positions and directions, make sure these are simple 2D arrays
-        new_positions = np.zeros((self.spore_count, 3))
-        new_directions = np.zeros((self.spore_count, 3))  # Make sure this matches the structure of new_positions
+        # Update spore positions
+        self.spores['x'] += delta_x
+        self.spores['y'] += delta_y
+        self.spores['z'] += delta_z
 
-        for idx, spore in enumerate(self.spores):
-            spore_position = np.array([spore['x'], spore['y'], spore['z']])
-            spore_direction = np.array([spore['dir_x'], spore['dir_y'], spore['dir_z']])
+        # Wrap positions around the simulation boundaries to create a toroidal space
+        self.spores['x'] %= self.simulation_size
+        self.spores['y'] %= self.simulation_size
+        self.spores['z'] %= self.simulation_size
 
-            right_vector = np.cross(spore_direction, global_up)
-            if np.linalg.norm(right_vector) == 0:
-                right_vector = np.array([1.0, 0.0, 0.0])  # Fallback vector
-            right_vector /= np.linalg.norm(right_vector)
 
-            up_vector = np.cross(right_vector, spore_direction)
-            up_vector /= np.linalg.norm(up_vector)
+    def sense_and_turn(self, debug=False):
+        angle_offset = np.radians(45)
+        cos_offset = np.cos(angle_offset)
+        sin_offset = np.sin(angle_offset)
 
-            forward_weight = self.sense(spore_position, self.volume_data, spore_direction, self.sensor_distance, self.simulation_size)
-            right_weight = self.sense(spore_position, self.volume_data, right_vector, self.sensor_distance, self.simulation_size)
-            left_weight = self.sense(spore_position, self.volume_data, -right_vector, self.sensor_distance, self.simulation_size)
-            up_weight = self.sense(spore_position, self.volume_data, up_vector, self.sensor_distance, self.simulation_size)
-            down_weight = self.sense(spore_position, self.volume_data, -up_vector, self.sensor_distance, self.simulation_size)
+        sense_directions = np.array([
+            [1, 0, 0],  # Forward
+            [cos_offset, sin_offset, 0],  # Left-forward
+            [cos_offset, -sin_offset, 0],  # Right-forward
+            [cos_offset, 0, sin_offset],  # Up-forward (tilting up)
+            [cos_offset, 0, -sin_offset],  # Down-forward (tilting down)
+        ])
 
-            direction_change = np.array([0.0, 0.0, 0.0])
-            if forward_weight < max(right_weight, left_weight):
-                direction_change += right_vector if right_weight > left_weight else -right_vector
-            if forward_weight < max(up_weight, down_weight):
-                direction_change += up_vector if up_weight > down_weight else -up_vector
+        for idx in range(self.spore_count):
+            dir_vector = np.array([self.spores['dir_x'][idx], self.spores['dir_y'][idx], self.spores['dir_z'][idx]])
+            forward = glm.normalize(glm.vec3(dir_vector))
 
-            new_direction = spore_direction + direction_change
-            if np.linalg.norm(new_direction) > 0:
-                new_direction /= np.linalg.norm(new_direction)
+            # Assuming Y is global up, but Z is forward
+            global_up = glm.vec3(0, 1, 0)
+            right = glm.normalize(glm.cross(global_up, forward))
+            up = glm.normalize(glm.cross(forward, right))
 
-            new_position = spore_position + new_direction * self.spore_speed * self.delta_time
-            new_position = np.clip(new_position, 0, self.simulation_size - 1)
+            rotation_matrix = np.array([right, up, forward]).T
 
-            if not np.array_equal(new_position, spore_position):
-                random_direction = np.random.normal(size=3)
-                random_direction /= np.linalg.norm(random_direction)
-                new_direction = -new_direction + 0.5 * random_direction
-                new_direction /= np.linalg.norm(new_direction)
+            if debug:
+                print("Rotation Matrix:\n", rotation_matrix)
+                print("forward: ", forward)
+                print("right: ", right)
+                print("up: ", up)
 
-            new_positions[idx] = new_position
-            new_directions[idx] = new_direction
+            concentration = np.zeros(5)
+            position = np.array([self.spores['x'][idx], self.spores['y'][idx], self.spores['z'][idx]])
+            for i, sense_dir in enumerate(sense_directions):
+                rotated_sense_dir = rotation_matrix.dot(sense_dir)
+                sense_point = (position + rotated_sense_dir * self.sensor_distance) % self.simulation_size
+                concentration[i] = self.volume_data[tuple(sense_point.astype(int))]
+                if debug:
+                    print(f"Original: {sense_dir}, Rotated: {rotated_sense_dir}")
+                    debug_point = tuple(sense_point.astype(int))
+                    self.volume_data[debug_point] = 1
 
-        self.spores['x'], self.spores['y'], self.spores['z'] = new_positions[:, 0], new_positions[:, 1], new_positions[:, 2]
-        self.spores['dir_x'], self.spores['dir_y'], self.spores['dir_z'] = new_directions[:, 0], new_directions[:, 1], new_directions[:, 2]
+            best_dir_idx = np.argmax(concentration)
+            best_direction = rotation_matrix.dot(sense_directions[best_dir_idx])
+            turn_rate = self.turn_speed * self.delta_time
+            new_dir = glm.mix(glm.vec3(dir_vector), glm.vec3(best_direction), turn_rate)
+            new_dir = glm.normalize(new_dir)
+            self.spores['dir_x'][idx], self.spores['dir_y'][idx], self.spores['dir_z'][idx] = new_dir.x, new_dir.y, new_dir.z
 
-    def sense(self, position, volume, direction, distance, simulation_size):
-        sample_position = position + direction * distance
-        sample_position = np.clip(sample_position, 0, simulation_size - 1).astype(int)
-        return volume[sample_position[0], sample_position[1], sample_position[2]]
+
+
 
     def render_gui(self):
         # Set the window's background alpha (transparency) to 0.7 (1.0 is opaque, 0.0 is transparent)
@@ -308,6 +336,7 @@ class Simulation3D(GameEngine):
         imgui.end()
         imgui.pop_style_var()
 
+
     def update_settings_buffer(self):
         # Create a new settings array
         settings = np.array([(self.spore_count, self.simulation_size,
@@ -318,5 +347,5 @@ class Simulation3D(GameEngine):
         cl.enqueue_copy(self.cl_queue, self.settings_buffer, settings)
 
 if __name__ == '__main__':
-    game = Simulation3D(1000, 1000, 20,  target_framerate=30, spore_count=150)
+    game = Simulation3D(1000, 1000, 50,  target_framerate=30, spore_count=1)
     game.run()
