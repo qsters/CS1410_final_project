@@ -21,10 +21,10 @@ class Simulation3D(GameEngine):
         self.spores = self.initialize_spores()
         self.spores_buffer = self.initialize_buffer(self.spores)
 
-        self.spore_speed = 17
+        self.spore_speed = 5.5
         self.decay_speed = 0.4
-        self.sensor_distance = 14
-        self.turn_speed = 11
+        self.sensor_distance = 2.6
+        self.turn_speed = 7
 
         # Dtype for the settings
         self.settings_dtype = np.dtype([
@@ -180,22 +180,99 @@ class Simulation3D(GameEngine):
     def update(self):
         """Runs Kernels, updates data, and camera position"""
 
-        self.program.decay_trails(self.cl_queue, (self.simulation_size, self.simulation_size, self.simulation_size),
-                                  None, self.volume_buffer, self.settings_buffer, np.float32(self.delta_time))
+        self.decay_spores()
+        self.draw_spores()
+        self.move_spores()
 
-        self.program.draw_spores(self.cl_queue, (self.spore_count,), None,
-                                 self.volume_buffer, self.spores_buffer, self.settings_buffer)
+        self.volume_buffer = self.initialize_buffer(self.volume_data)
 
-        self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.volume_buffer,
-                                 self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
+
+        # self.program.move_spores(self.cl_queue, (self.spore_count,), None, self.spores_buffer, self.volume_buffer,
+        #                          self.random_seeds_buffer, self.settings_buffer, np.float32(self.delta_time))
 
         self.cl_queue.finish()
 
         cl.enqueue_copy(self.cl_queue, self.volume_data, self.volume_buffer).wait()
+        cl.enqueue_copy(self.cl_queue, self.spores, self.spores_buffer).wait()
 
         self.instance_positions, self.instance_sizes = self.get_instance_positions_and_sizes()
         self.renderer.update_instance_data(self.instance_positions, self.instance_sizes)
         self.camera_mover.update_view(self.delta_time)
+
+    def decay_spores(self):
+        self.volume_data -= self.delta_time * self.decay_speed
+        self.volume_data = np.clip(self.volume_data, 0,1)
+
+    def draw_spores(self):
+        simulation_size = self.settings['simulation_size']
+
+        # Extract positions
+        x = self.spores['x'].astype(int)
+        y = self.spores['y'].astype(int)
+        z = self.spores['z'].astype(int)
+
+        # Clamp values to ensure they are within the bounds of the volume
+        x = np.clip(x, 0, simulation_size - 1)
+        y = np.clip(y, 0, simulation_size - 1)
+        z = np.clip(z, 0, simulation_size - 1)
+
+        # Update the volume data at the clamped coordinates
+        self.volume_data[x, y, z] = 1
+
+    def move_spores(self):
+        global_up = np.array([0.0, 0.0, 1.0])
+
+        # Array for new positions and directions, make sure these are simple 2D arrays
+        new_positions = np.zeros((self.spore_count, 3))
+        new_directions = np.zeros((self.spore_count, 3))  # Make sure this matches the structure of new_positions
+
+        for idx, spore in enumerate(self.spores):
+            spore_position = np.array([spore['x'], spore['y'], spore['z']])
+            spore_direction = np.array([spore['dir_x'], spore['dir_y'], spore['dir_z']])
+
+            right_vector = np.cross(spore_direction, global_up)
+            if np.linalg.norm(right_vector) == 0:
+                right_vector = np.array([1.0, 0.0, 0.0])  # Fallback vector
+            right_vector /= np.linalg.norm(right_vector)
+
+            up_vector = np.cross(right_vector, spore_direction)
+            up_vector /= np.linalg.norm(up_vector)
+
+            forward_weight = self.sense(spore_position, self.volume_data, spore_direction, self.sensor_distance, self.simulation_size)
+            right_weight = self.sense(spore_position, self.volume_data, right_vector, self.sensor_distance, self.simulation_size)
+            left_weight = self.sense(spore_position, self.volume_data, -right_vector, self.sensor_distance, self.simulation_size)
+            up_weight = self.sense(spore_position, self.volume_data, up_vector, self.sensor_distance, self.simulation_size)
+            down_weight = self.sense(spore_position, self.volume_data, -up_vector, self.sensor_distance, self.simulation_size)
+
+            direction_change = np.array([0.0, 0.0, 0.0])
+            if forward_weight < max(right_weight, left_weight):
+                direction_change += right_vector if right_weight > left_weight else -right_vector
+            if forward_weight < max(up_weight, down_weight):
+                direction_change += up_vector if up_weight > down_weight else -up_vector
+
+            new_direction = spore_direction + direction_change
+            if np.linalg.norm(new_direction) > 0:
+                new_direction /= np.linalg.norm(new_direction)
+
+            new_position = spore_position + new_direction * self.spore_speed * self.delta_time
+            new_position = np.clip(new_position, 0, self.simulation_size - 1)
+
+            if not np.array_equal(new_position, spore_position):
+                random_direction = np.random.normal(size=3)
+                random_direction /= np.linalg.norm(random_direction)
+                new_direction = -new_direction + 0.5 * random_direction
+                new_direction /= np.linalg.norm(new_direction)
+
+            new_positions[idx] = new_position
+            new_directions[idx] = new_direction
+
+        self.spores['x'], self.spores['y'], self.spores['z'] = new_positions[:, 0], new_positions[:, 1], new_positions[:, 2]
+        self.spores['dir_x'], self.spores['dir_y'], self.spores['dir_z'] = new_directions[:, 0], new_directions[:, 1], new_directions[:, 2]
+
+    def sense(self, position, volume, direction, distance, simulation_size):
+        sample_position = position + direction * distance
+        sample_position = np.clip(sample_position, 0, simulation_size - 1).astype(int)
+        return volume[sample_position[0], sample_position[1], sample_position[2]]
 
     def render_gui(self):
         # Set the window's background alpha (transparency) to 0.7 (1.0 is opaque, 0.0 is transparent)
@@ -241,5 +318,5 @@ class Simulation3D(GameEngine):
         cl.enqueue_copy(self.cl_queue, self.settings_buffer, settings)
 
 if __name__ == '__main__':
-    game = Simulation3D(1000, 1000, 100,  target_framerate=30, spore_count=10000)
+    game = Simulation3D(1000, 1000, 20,  target_framerate=30, spore_count=150)
     game.run()
