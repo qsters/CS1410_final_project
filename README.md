@@ -13,3 +13,6 @@ pip install PyOpenGL PyOpenGL_accelerate 'imgui[full]' numpy PyGLM pyopencl glfw
 pip install PyOpenGL PyOpenGL_accelerate imgui[full] numpy PyGLM pyopencl glfw
 ```
 - Run 3D_simulation.py
+
+## Demonstration
+https://github.com/qsters/CS1410_final_project/assets/82182875/e0a5dc23-e776-45c1-9eda-7c843ccdf737
