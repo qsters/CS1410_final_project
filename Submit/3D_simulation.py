@@ -241,5 +241,5 @@ class Simulation3D(GameEngine):
         cl.enqueue_copy(self.cl_queue, self.settings_buffer, settings)
 
 if __name__ == '__main__':
-    game = Simulation3D(1000, 1000, 100,  target_framerate=30, spore_count=10000)
+    game = Simulation3D(500, 500, 50,  target_framerate=30, spore_count=1000)
     game.run()
